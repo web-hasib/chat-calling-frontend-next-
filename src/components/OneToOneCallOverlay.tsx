@@ -91,12 +91,14 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
   useEffect(() => {
     if (localVideoElRef.current && localStream) {
       localVideoElRef.current.srcObject = localStream;
+      localVideoElRef.current.play().catch(() => {});
     }
   }, [localStream, activeCall.status, isVideoMuted]);
 
   useEffect(() => {
     if (remoteVideoElRef.current && remoteStream) {
       remoteVideoElRef.current.srcObject = remoteStream;
+      remoteVideoElRef.current.play().catch(() => {});
     }
   }, [remoteStream, activeCall.status]);
 
