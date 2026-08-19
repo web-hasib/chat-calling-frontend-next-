@@ -1,0 +1,1596 @@
+'use client';
+
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
+import { useSocket } from './SocketContext';
+import { useAuth } from './AuthContext';
+
+// ─── 1:1 Call Types (unchanged) ───
+
+interface ActiveCall {
+  role: 'caller' | 'receiver';
+  type: 'AUDIO' | 'VIDEO';
+  peerId: string;
+  peerName?: string;
+  peerAvatar?: string;
+  conversationId: string;
+  status: 'idle' | 'ringing' | 'connecting' | 'connected' | 'busy' | 'declined' | 'ended';
+}
+
+// ─── Group Call Types ───
+
+interface GroupCallParticipant {
+  userId: string;
+  name: string;
+  avatarUrl?: string;
+  role?: string;
+}
+
+interface ActiveGroupCall {
+  role: 'initiator' | 'participant';
+  type: 'AUDIO' | 'VIDEO';
+  conversationId: string;
+  groupName: string;
+  status: 'idle' | 'ringing' | 'connecting' | 'connected' | 'ended';
+  participants: GroupCallParticipant[];
+  startedAt?: number;
+}
+
+interface GroupCallStatus {
+  active: boolean;
+  type?: 'AUDIO' | 'VIDEO';
+  startedAt?: number;
+  participantsCount?: number;
+}
+
+interface GroupChatMessage {
+  senderId: string;
+  senderName: string;
+  message: string;
+  timestamp: number;
+}
+
+interface GroupCallEmojiReaction {
+  userId: string;
+  emoji: string;
+  id: number;
+}
+
+// ─── Context Type ───
+
+interface CallContextType {
+  // 1:1 call
+  activeCall: ActiveCall | null;
+  localStream: MediaStream | null;
+  remoteStream: MediaStream | null;
+  callDuration: number;
+  isMuted: boolean;
+  isVideoMuted: boolean;
+  isScreenSharing: boolean;
+  startCall: (targetUserId: string, targetName: string, targetAvatar: string, type: 'AUDIO' | 'VIDEO', conversationId: string) => Promise<void>;
+  acceptCall: () => Promise<void>;
+  rejectCall: () => void;
+  endCall: () => void;
+  toggleMute: () => void;
+  toggleVideo: () => void;
+  toggleScreenShare: () => Promise<void>;
+
+  // Group call
+  activeGroupCall: ActiveGroupCall | null;
+  groupLocalStream: MediaStream | null;
+  groupRemoteStreams: Map<string, MediaStream>;
+  groupCallDuration: number;
+  isGroupMuted: boolean;
+  isGroupVideoMuted: boolean;
+  isGroupScreenSharing: boolean;
+  currentConvoId: string | null;
+  setCurrentConvoId: (convoId: string | null) => void;
+  groupCallStatus: GroupCallStatus | null;
+  groupCallMessages: GroupChatMessage[];
+  latestEmojiReaction: GroupCallEmojiReaction | null;
+  groupCallVideoStates: Record<string, boolean>;
+  groupCallScreenSharingStates: Record<string, boolean>;
+  groupMutedUserIds: Set<string>;
+  myGroupRole: string | null;
+  isHandRaised: boolean;
+  isFootRaised: boolean;
+  groupCallHandRaisedStates: Record<string, boolean>;
+  groupCallFootRaisedStates: Record<string, boolean>;
+  startGroupCall: (conversationId: string, groupName: string, type: 'AUDIO' | 'VIDEO') => void;
+  joinGroupCall: (convoIdToJoin?: string, convoTypeToJoin?: 'AUDIO' | 'VIDEO') => Promise<void>;
+  rejectGroupCall: () => void;
+  leaveGroupCall: () => void;
+  toggleGroupMute: () => void;
+  toggleGroupVideo: () => void;
+  toggleGroupScreenShare: () => Promise<void>;
+  sendGroupCallMessage: (message: string) => void;
+  triggerGroupCallEmoji: (emoji: string) => void;
+  adminMuteAll: () => void;
+  toggleHandRaise: () => void;
+  toggleFootRaise: () => void;
+  adminMuteUser: (userId: string) => void;
+  adminUnmuteUser: (userId: string) => void;
+}
+
+const CallContext = createContext<CallContextType | undefined>(undefined);
+
+const iceConfig: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.nextcloud.com:443' },
+    { urls: 'stun:stun.matrix.org:3478' },
+  ],
+  iceCandidatePoolSize: 10,
+};
+
+// ─── Audio Synthesizer (shared) ───
+
+class CallAudioSynthesizer {
+  private audioCtx: AudioContext | null = null;
+  private intervalId: any = null;
+  private oscs: OscillatorNode[] = [];
+  private gainNode: GainNode | null = null;
+
+  startRingingOutgoing() {
+    this.stop();
+    const AudioContextClass = typeof window !== 'undefined' ? (window.AudioContext || (window as any).webkitAudioContext) : null;
+    if (!AudioContextClass) return;
+    this.audioCtx = new AudioContextClass();
+    
+    const playRingCycle = () => {
+      if (!this.audioCtx) return;
+      if (this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume();
+      }
+      
+      const osc1 = this.audioCtx.createOscillator();
+      const osc2 = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+      
+      osc1.frequency.value = 440;
+      osc2.frequency.value = 480;
+      
+      gain.gain.setValueAtTime(0, this.audioCtx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.06, this.audioCtx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.06, this.audioCtx.currentTime + 1.9);
+      gain.gain.linearRampToValueAtTime(0, this.audioCtx.currentTime + 2.0);
+      
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(this.audioCtx.destination);
+      
+      osc1.start();
+      osc2.start();
+      
+      this.oscs = [osc1, osc2];
+      this.gainNode = gain;
+      
+      setTimeout(() => {
+        try {
+          osc1.stop();
+          osc2.stop();
+        } catch(e) {}
+      }, 2000);
+    };
+    
+    playRingCycle();
+    this.intervalId = setInterval(playRingCycle, 6000);
+  }
+
+  startRingtoneIncoming() {
+    this.stop();
+    const AudioContextClass = typeof window !== 'undefined' ? (window.AudioContext || (window as any).webkitAudioContext) : null;
+    if (!AudioContextClass) return;
+    this.audioCtx = new AudioContextClass();
+
+    const playRingtoneCycle = () => {
+      if (!this.audioCtx) return;
+      if (this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume();
+      }
+
+      const now = this.audioCtx.currentTime;
+      const gain = this.audioCtx.createGain();
+      gain.connect(this.audioCtx.destination);
+      this.gainNode = gain;
+
+      const playBeep = (freq: number, startOffset: number, duration: number) => {
+        if (!this.audioCtx || !gain) return;
+        const osc = this.audioCtx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + startOffset);
+        
+        gain.gain.setValueAtTime(0, now + startOffset);
+        gain.gain.linearRampToValueAtTime(0.08, now + startOffset + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + startOffset + duration - 0.05);
+        
+        osc.connect(gain);
+        osc.start(now + startOffset);
+        osc.stop(now + startOffset + duration);
+        this.oscs.push(osc);
+      };
+
+      playBeep(853, 0.0, 0.4);
+      playBeep(960, 0.0, 0.4);
+      
+      playBeep(853, 0.5, 0.4);
+      playBeep(960, 0.5, 0.4);
+
+      playBeep(853, 1.2, 0.4);
+      playBeep(960, 1.2, 0.4);
+
+      playBeep(853, 1.7, 0.4);
+      playBeep(960, 1.7, 0.4);
+    };
+
+    playRingtoneCycle();
+    this.intervalId = setInterval(playRingtoneCycle, 3500);
+  }
+
+  stop() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    this.oscs.forEach(osc => {
+      try {
+        osc.stop();
+      } catch (e) {}
+    });
+    this.oscs = [];
+    if (this.gainNode) {
+      try {
+        this.gainNode.disconnect();
+      } catch(e) {}
+      this.gainNode = null;
+    }
+    if (this.audioCtx) {
+      try {
+        this.audioCtx.close();
+      } catch(e) {}
+      this.audioCtx = null;
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CallProvider
+// ═══════════════════════════════════════════════════════════════
+
+export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { socket } = useSocket();
+  const { user } = useAuth();
+
+  // ─── 1:1 Call State (unchanged) ───
+
+  const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [callDuration, setCallDuration] = useState<number>(0);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isVideoMuted, setIsVideoMuted] = useState<boolean>(false);
+  const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
+
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const incomingOfferRef = useRef<any>(null);
+  const callTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const screenTrackRef = useRef<MediaStreamTrack | null>(null);
+  const audioSynthRef = useRef<CallAudioSynthesizer | null>(null);
+  const activeCallRef = useRef<ActiveCall | null>(null);
+
+  // ─── Group Call State ───
+
+  const [activeGroupCall, setActiveGroupCall] = useState<ActiveGroupCall | null>(null);
+  const [groupLocalStream, setGroupLocalStream] = useState<MediaStream | null>(null);
+  const [groupRemoteStreams, setGroupRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [groupCallDuration, setGroupCallDuration] = useState<number>(0);
+  const [isGroupMuted, setIsGroupMuted] = useState<boolean>(false);
+  const [isGroupVideoMuted, setIsGroupVideoMuted] = useState<boolean>(false);
+  const [isGroupScreenSharing, setIsGroupScreenSharing] = useState<boolean>(false);
+
+  // Synchronized timestamp state
+  const [groupCallStartedAt, setGroupCallStartedAt] = useState<number | null>(null);
+
+  // Ephemeral Group Call Features (Chat & Emoji Reactions)
+  const [groupCallMessages, setGroupCallMessages] = useState<GroupChatMessage[]>([]);
+  const [latestEmojiReaction, setLatestEmojiReaction] = useState<GroupCallEmojiReaction | null>(null);
+  const [groupCallVideoStates, setGroupCallVideoStates] = useState<Record<string, boolean>>({});
+  const [groupCallScreenSharingStates, setGroupCallScreenSharingStates] = useState<Record<string, boolean>>({});
+
+  // Current active conversation context to track group call status
+  const [currentConvoId, setCurrentConvoId] = useState<string | null>(null);
+  const [groupCallStatus, setGroupCallStatus] = useState<GroupCallStatus | null>(null);
+
+  const [myGroupRole, setMyGroupRole] = useState<string | null>(null);
+  const [groupMutedUserIds, setGroupMutedUserIds] = useState<Set<string>>(new Set());
+
+  const [isHandRaised, setIsHandRaised] = useState<boolean>(false);
+  const [isFootRaised, setIsFootRaised] = useState<boolean>(false);
+  const [groupCallHandRaisedStates, setGroupCallHandRaisedStates] = useState<Record<string, boolean>>({});
+  const [groupCallFootRaisedStates, setGroupCallFootRaisedStates] = useState<Record<string, boolean>>({});
+
+  // Map of userId -> RTCPeerConnection for group mesh
+  const groupPeerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const groupScreenTrackRef = useRef<MediaStreamTrack | null>(null);
+  const groupLocalStreamRef = useRef<MediaStream | null>(null);
+  const activeGroupCallRef = useRef<ActiveGroupCall | null>(null);
+
+  // ─── Sync refs ───
+
+  useEffect(() => {
+    activeCallRef.current = activeCall;
+  }, [activeCall]);
+
+  useEffect(() => {
+    activeGroupCallRef.current = activeGroupCall;
+  }, [activeGroupCall]);
+
+  useEffect(() => {
+    groupLocalStreamRef.current = groupLocalStream;
+  }, [groupLocalStream]);
+
+  const isHandRaisedRef = useRef(false);
+  const isFootRaisedRef = useRef(false);
+
+  useEffect(() => {
+    isHandRaisedRef.current = isHandRaised;
+  }, [isHandRaised]);
+
+  useEffect(() => {
+    isFootRaisedRef.current = isFootRaised;
+  }, [isFootRaised]);
+
+  // Synchronized timer hook based on startedAt timestamp
+  useEffect(() => {
+    if (!groupCallStartedAt) {
+      setGroupCallDuration(0);
+      return;
+    }
+    const updateTimer = () => {
+      const diff = Math.floor((Date.now() - groupCallStartedAt) / 1000);
+      setGroupCallDuration(diff > 0 ? diff : 0);
+    };
+    updateTimer();
+    const intervalId = setInterval(updateTimer, 1000);
+    return () => clearInterval(intervalId);
+  }, [groupCallStartedAt]);
+
+  // Initialize synthesizer
+  useEffect(() => {
+    audioSynthRef.current = new CallAudioSynthesizer();
+    return () => {
+      audioSynthRef.current?.stop();
+    };
+  }, []);
+
+  // Monitor dynamic call status for the current active conversation
+  useEffect(() => {
+    if (!socket || !currentConvoId) {
+      setGroupCallStatus(null);
+      return;
+    }
+
+    const statusChannel = `group-call-status-${currentConvoId}`;
+
+    const handleStatusUpdate = (data: GroupCallStatus) => {
+      setGroupCallStatus(data);
+    };
+
+    const handleStatusResponse = (res: { conversationId: string; active: boolean; type?: 'AUDIO' | 'VIDEO'; startedAt?: number; participants?: string[] }) => {
+      if (res.conversationId === currentConvoId) {
+        setGroupCallStatus({
+          active: res.active,
+          type: res.type,
+          startedAt: res.startedAt,
+          participantsCount: res.participants?.length || 0,
+        });
+      }
+    };
+
+    socket.on(statusChannel, handleStatusUpdate);
+    socket.on('group-call-status-response', handleStatusResponse);
+
+    // Initial check
+    socket.emit('group-call-status', { conversationId: currentConvoId });
+
+    return () => {
+      socket.off(statusChannel, handleStatusUpdate);
+      socket.off('group-call-status-response', handleStatusResponse);
+    };
+  }, [socket, currentConvoId]);
+
+  // ═══════════════════════════════════════════════════════════
+  // 1:1 CALL LOGIC (unchanged from original)
+  // ═══════════════════════════════════════════════════════════
+
+  // Set up socket signaling listeners
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on('incoming-call', (data: { from: string; offer: any; type: 'AUDIO' | 'VIDEO'; conversationId: string; callerName?: string; callerAvatar?: string }) => {
+      if (activeCallRef.current && activeCallRef.current.status !== 'idle') {
+        socket.emit('reject-call', {
+          to: data.from,
+          conversationId: data.conversationId,
+          type: data.type,
+          reason: 'busy',
+        });
+        return;
+      }
+      if (activeGroupCallRef.current && activeGroupCallRef.current.status !== 'idle') {
+        socket.emit('reject-call', {
+          to: data.from,
+          conversationId: data.conversationId,
+          type: data.type,
+          reason: 'busy',
+        });
+        return;
+      }
+      setActiveCall({
+        role: 'receiver',
+        type: data.type,
+        peerId: data.from,
+        peerName: data.callerName || 'Incoming Caller',
+        peerAvatar: data.callerAvatar,
+        conversationId: data.conversationId,
+        status: 'ringing',
+      });
+      incomingOfferRef.current = data.offer;
+      audioSynthRef.current?.startRingtoneIncoming();
+    });
+
+    socket.on('call-accepted', async (data: { answer: any }) => {
+      if (peerConnectionRef.current) {
+        try {
+          audioSynthRef.current?.stop();
+          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+          setActiveCall(prev => prev ? { ...prev, status: 'connected' } : null);
+          startCallTimer();
+        } catch (e) {
+          console.error('Error setting remote description', e);
+        }
+      }
+    });
+
+    socket.on('ice-candidate', async (data: { candidate: any }) => {
+      if (peerConnectionRef.current) {
+        try {
+          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+          console.error('Error adding ICE candidate', e);
+        }
+      }
+    });
+
+    socket.on('call-rejected', (data?: { reason?: string }) => {
+      if (data?.reason === 'busy') {
+        setActiveCall(prev => prev ? { ...prev, status: 'busy' } : null);
+      } else {
+        setActiveCall(prev => prev ? { ...prev, status: 'declined' } : null);
+      }
+      setTimeout(cleanupCall, 2000);
+    });
+
+    socket.on('call-ended', () => {
+      setActiveCall(prev => prev ? { ...prev, status: 'ended' } : null);
+      setTimeout(cleanupCall, 2000);
+    });
+
+    socket.on('call-failed', (err: { reason: string }) => {
+      alert(`Call failed: ${err.reason}`);
+      cleanupCall();
+    });
+
+    return () => {
+      socket.off('incoming-call');
+      socket.off('call-accepted');
+      socket.off('ice-candidate');
+      socket.off('call-rejected');
+      socket.off('call-ended');
+      socket.off('call-failed');
+    };
+  }, [socket]);
+
+  const startCallTimer = () => {
+    setCallDuration(0);
+    callTimerRef.current = setInterval(() => {
+      setCallDuration((prev) => prev + 1);
+    }, 1000);
+  };
+
+  const stopCallTimer = () => {
+    if (callTimerRef.current) {
+      clearInterval(callTimerRef.current);
+      callTimerRef.current = null;
+    }
+    setCallDuration(0);
+  };
+
+  const initMedia = async (type: 'AUDIO' | 'VIDEO', isGroup = false) => {
+    try {
+      const videoConstraints = isGroup
+        ? {
+            width: { ideal: 640, max: 854 },
+            height: { ideal: 360, max: 480 },
+            frameRate: { ideal: 15, max: 20 },
+          }
+        : type === 'VIDEO';
+
+      const audioConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: type === 'VIDEO' ? videoConstraints : false,
+        audio: audioConstraints,
+      });
+      return stream;
+    } catch (e) {
+      if (type === 'VIDEO') {
+        console.warn('Video acquisition failed, falling back to audio only');
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            video: false,
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+          return fallbackStream;
+        } catch (err) {
+          console.error('Audio fallback failed as well', err);
+        }
+      }
+      console.error('Error accessing media devices', e);
+      alert('Could not access camera or microphone.');
+      throw e;
+    }
+  };
+
+  const setupPeerConnection = (stream: MediaStream, targetUserId: string) => {
+    const pc = new RTCPeerConnection(iceConfig);
+
+    stream.getTracks().forEach((track) => {
+      pc.addTrack(track, stream);
+    });
+
+    pc.ontrack = (event) => {
+      if (event.streams && event.streams[0]) {
+        setRemoteStream(event.streams[0]);
+      }
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && socket) {
+        socket.emit('ice-candidate', {
+          to: targetUserId,
+          candidate: event.candidate,
+        });
+      }
+    };
+
+    peerConnectionRef.current = pc;
+    return pc;
+  };
+
+  const startCall = async (
+    targetUserId: string,
+    targetName: string,
+    targetAvatar: string,
+    type: 'AUDIO' | 'VIDEO',
+    conversationId: string
+  ) => {
+    try {
+      setActiveCall({
+        role: 'caller',
+        type,
+        peerId: targetUserId,
+        peerName: targetName,
+        peerAvatar: targetAvatar,
+        conversationId,
+        status: 'ringing',
+      });
+      audioSynthRef.current?.startRingingOutgoing();
+
+      const stream = await initMedia(type);
+      setLocalStream(stream);
+      setIsMuted(false);
+      setIsVideoMuted(type === 'VIDEO' ? false : true);
+      const pc = setupPeerConnection(stream, targetUserId);
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      if (socket) {
+        socket.emit('call-user', {
+          to: targetUserId,
+          offer,
+          type,
+          conversationId,
+          callerName: user?.name,
+          callerAvatar: user?.avatarUrl,
+        });
+      }
+    } catch (e) {
+      cleanupCall();
+    }
+  };
+
+  const acceptCall = async () => {
+    if (!activeCall || !incomingOfferRef.current || !socket) return;
+
+    try {
+      audioSynthRef.current?.stop();
+      setActiveCall(prev => prev ? { ...prev, status: 'connecting' } : null);
+      
+      const stream = await initMedia(activeCall.type);
+      setLocalStream(stream);
+      setIsMuted(false);
+      setIsVideoMuted(activeCall.type === 'VIDEO' ? false : true);
+      const pc = setupPeerConnection(stream, activeCall.peerId);
+
+      await pc.setRemoteDescription(new RTCSessionDescription(incomingOfferRef.current));
+      
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      socket.emit('accept-call', {
+        to: activeCall.peerId,
+        answer,
+      });
+
+      setActiveCall(prev => prev ? { ...prev, status: 'connected' } : null);
+      startCallTimer();
+    } catch (e) {
+      cleanupCall();
+    }
+  };
+
+  const rejectCall = () => {
+    if (!activeCall || !socket) return;
+    socket.emit('reject-call', {
+      to: activeCall.peerId,
+      conversationId: activeCall.conversationId,
+      type: activeCall.type,
+    });
+    cleanupCall();
+  };
+
+  const endCall = () => {
+    if (!activeCall || !socket) return;
+    socket.emit('end-call', {
+      to: activeCall.peerId,
+      conversationId: activeCall.conversationId,
+      type: activeCall.type,
+      duration: callDuration,
+    });
+    cleanupCall();
+  };
+
+  const toggleMute = () => {
+    if (!localStream) return;
+    const audioTrack = localStream.getAudioTracks()[0];
+    if (audioTrack) {
+      audioTrack.enabled = !audioTrack.enabled;
+      setIsMuted(!audioTrack.enabled);
+    }
+  };
+
+  const toggleVideo = () => {
+    if (!localStream) return;
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.enabled = !videoTrack.enabled;
+      setIsVideoMuted(!videoTrack.enabled);
+    }
+  };
+
+  const toggleScreenShare = async () => {
+    if (!peerConnectionRef.current || !localStream) return;
+
+    if (!isScreenSharing) {
+      try {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+        screenTrackRef.current = screenTrack;
+
+        const videoSender = peerConnectionRef.current.getSenders().find(s => s.track?.kind === 'video');
+        if (videoSender) {
+          await videoSender.replaceTrack(screenTrack);
+        }
+
+        screenTrack.onended = () => {
+          stopScreenShareHelper();
+        };
+
+        setIsScreenSharing(true);
+      } catch (err) {
+        console.error('Error starting screen share', err);
+      }
+    } else {
+      stopScreenShareHelper();
+    }
+  };
+
+  const stopScreenShareHelper = async () => {
+    if (screenTrackRef.current) {
+      screenTrackRef.current.stop();
+      screenTrackRef.current = null;
+    }
+
+    if (peerConnectionRef.current && localStream) {
+      const webcamTrack = localStream.getVideoTracks()[0];
+      const videoSender = peerConnectionRef.current.getSenders().find(s => s.track?.kind === 'video');
+      if (videoSender && webcamTrack) {
+        await videoSender.replaceTrack(webcamTrack);
+      }
+    }
+    setIsScreenSharing(false);
+  };
+
+  const cleanupCall = () => {
+    audioSynthRef.current?.stop();
+    stopCallTimer();
+    if (screenTrackRef.current) {
+      screenTrackRef.current.stop();
+      screenTrackRef.current = null;
+    }
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    if (localStream) {
+      localStream.getTracks().forEach((track) => track.stop());
+      setLocalStream(null);
+    }
+    setRemoteStream(null);
+    incomingOfferRef.current = null;
+    setActiveCall(null);
+    setIsMuted(false);
+    setIsVideoMuted(false);
+    setIsScreenSharing(false);
+  };
+
+  // ═══════════════════════════════════════════════════════════
+  // GROUP CALL LOGIC
+  // ═══════════════════════════════════════════════════════════
+
+  // Helper to optimize encoding parameters on group call video senders
+  const applyGroupSenderEncodingParams = useCallback((pc: RTCPeerConnection, isScreenShare = false) => {
+    try {
+      const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+      if (videoSender && videoSender.track) {
+        const params = videoSender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        if (isScreenShare) {
+          params.encodings[0].maxBitrate = 1000000; // 1 Mbps for sharp screen sharing text
+          params.encodings[0].maxFramerate = 15;
+          delete params.encodings[0].scaleResolutionDownBy;
+        } else {
+          params.encodings[0].maxBitrate = 250000; // 250 kbps max per peer in group call to save CPU & bandwidth
+          params.encodings[0].maxFramerate = 20;
+          params.encodings[0].scaleResolutionDownBy = 1.2;
+        }
+        videoSender.setParameters(params).catch(() => {});
+      }
+    } catch (e) {
+      // Graceful fallback if browser doesn't support setting encoding parameters
+    }
+  }, []);
+
+  // Helper: create a peer connection for a specific group peer
+  const createGroupPeerConnection = useCallback((peerId: string, stream: MediaStream): RTCPeerConnection => {
+    const pc = new RTCPeerConnection(iceConfig);
+
+    stream.getTracks().forEach((track) => {
+      pc.addTrack(track, stream);
+    });
+
+    // Apply bitrate & framerate caps for group calls to save CPU and bandwidth
+    applyGroupSenderEncodingParams(pc, isGroupScreenSharing);
+
+    pc.ontrack = (event) => {
+      if (event.streams && event.streams[0]) {
+        setGroupRemoteStreams(prev => {
+          const next = new Map(prev);
+          next.set(peerId, event.streams[0]);
+          return next;
+        });
+      }
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && socket) {
+        socket.emit('group-ice-candidate', {
+          to: peerId,
+          candidate: event.candidate,
+          conversationId: activeGroupCallRef.current?.conversationId,
+        });
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+        console.warn(`Group call: ICE connection to ${peerId} ${pc.iceConnectionState}`);
+        if (pc.iceConnectionState === 'failed') {
+          removeGroupPeer(peerId);
+        }
+      }
+    };
+
+    groupPeerConnectionsRef.current.set(peerId, pc);
+    return pc;
+  }, [socket, isGroupScreenSharing, applyGroupSenderEncodingParams]);
+
+  // Helper: remove a specific peer from the group call
+  const removeGroupPeer = useCallback((peerId: string) => {
+    const pc = groupPeerConnectionsRef.current.get(peerId);
+    if (pc) {
+      pc.close();
+      groupPeerConnectionsRef.current.delete(peerId);
+    }
+    setGroupRemoteStreams(prev => {
+      const next = new Map(prev);
+      next.delete(peerId);
+      return next;
+    });
+    setActiveGroupCall(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        participants: prev.participants.filter(p => p.userId !== peerId),
+      };
+    });
+  }, []);
+
+  // Full cleanup for group call
+  const cleanupGroupCall = useCallback(() => {
+    audioSynthRef.current?.stop();
+    setGroupCallStartedAt(null);
+
+    if (groupScreenTrackRef.current) {
+      groupScreenTrackRef.current.stop();
+      groupScreenTrackRef.current = null;
+    }
+
+    for (const [, pc] of groupPeerConnectionsRef.current) {
+      pc.close();
+    }
+    groupPeerConnectionsRef.current.clear();
+
+    const stream = groupLocalStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+    }
+    setGroupLocalStream(null);
+    groupLocalStreamRef.current = null;
+
+    setGroupRemoteStreams(new Map());
+    setActiveGroupCall(null);
+    setIsGroupMuted(false);
+    setIsGroupVideoMuted(false);
+    setIsGroupScreenSharing(false);
+    setGroupCallMessages([]);
+    setLatestEmojiReaction(null);
+    setGroupCallVideoStates({});
+    setMyGroupRole(null);
+    setGroupMutedUserIds(new Set());
+    setIsHandRaised(false);
+    setIsFootRaised(false);
+    setGroupCallHandRaisedStates({});
+    setGroupCallFootRaisedStates({});
+  }, []);
+
+  // ─── Group Call Socket Listeners ───
+
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on('group-call-incoming', (data: {
+      conversationId: string;
+      type: 'AUDIO' | 'VIDEO';
+      initiatorId: string;
+      initiatorName: string;
+      initiatorAvatar?: string;
+      groupName: string;
+      startedAt: number;
+    }) => {
+      if (activeCallRef.current && activeCallRef.current.status !== 'idle') {
+        socket.emit('group-call-reject', { conversationId: data.conversationId });
+        return;
+      }
+      if (activeGroupCallRef.current && activeGroupCallRef.current.status !== 'idle') {
+        socket.emit('group-call-reject', { conversationId: data.conversationId });
+        return;
+      }
+
+      setActiveGroupCall({
+        role: 'participant',
+        type: data.type,
+        conversationId: data.conversationId,
+        groupName: data.groupName,
+        status: 'ringing',
+        participants: [{
+          userId: data.initiatorId,
+          name: data.initiatorName,
+          avatarUrl: data.initiatorAvatar,
+        }],
+        startedAt: data.startedAt,
+      });
+      setGroupCallStartedAt(data.startedAt);
+      audioSynthRef.current?.startRingtoneIncoming();
+    });
+
+    socket.on('group-call-started', (data: {
+      conversationId: string;
+      type: 'AUDIO' | 'VIDEO';
+      participants: string[];
+      myRole?: string;
+      startedAt: number;
+    }) => {
+      setActiveGroupCall(prev => prev ? { ...prev, status: 'connected', startedAt: data.startedAt } : null);
+      setGroupCallStartedAt(data.startedAt);
+      if (data.myRole) {
+        setMyGroupRole(data.myRole);
+      }
+    });
+
+    socket.on('group-call-joined', async (data: {
+      conversationId: string;
+      type: 'AUDIO' | 'VIDEO';
+      existingParticipants: GroupCallParticipant[];
+      myRole?: string;
+      startedAt: number;
+      messages?: GroupChatMessage[];
+    }) => {
+      audioSynthRef.current?.stop();
+
+      const stream = groupLocalStreamRef.current;
+      if (!stream) return;
+
+      if (data.messages) {
+        setGroupCallMessages(data.messages);
+      }
+
+      setActiveGroupCall(prev => prev ? {
+        ...prev,
+        status: 'connected',
+        participants: data.existingParticipants,
+        startedAt: data.startedAt,
+      } : null);
+
+      if (data.myRole) {
+        setMyGroupRole(data.myRole);
+      }
+
+      setGroupCallStartedAt(data.startedAt);
+
+      // Emit initial camera status when joining so other peers know if we have video on
+      const localVideoTrack = stream.getVideoTracks()[0];
+      socket.emit('group-call-media-state', {
+        conversationId: data.conversationId,
+        videoEnabled: localVideoTrack ? localVideoTrack.enabled : false,
+        audioEnabled: !isGroupMuted,
+      });
+
+      for (const peer of data.existingParticipants) {
+        try {
+          const pc = createGroupPeerConnection(peer.userId, stream);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          socket.emit('group-call-offer', {
+            to: peer.userId,
+            offer,
+            conversationId: data.conversationId,
+          });
+        } catch (e) {
+          console.error(`Failed to create offer for ${peer.userId}`, e);
+        }
+      }
+    });
+
+    socket.on('group-call-user-joined', (data: {
+      conversationId: string;
+      userId: string;
+      name: string;
+      avatarUrl?: string;
+      role?: string;
+    }) => {
+      setActiveGroupCall(prev => {
+        if (!prev) return null;
+        if (prev.participants.find(p => p.userId === data.userId)) return prev;
+        return {
+          ...prev,
+          participants: [...prev.participants, {
+            userId: data.userId,
+            name: data.name,
+            avatarUrl: data.avatarUrl,
+            role: data.role,
+          }],
+        };
+      });
+
+      // Broadcast our current media state so the newly joined user gets it
+      const stream = groupLocalStreamRef.current;
+      const videoTrack = stream?.getVideoTracks()[0];
+      const audioTrack = stream?.getAudioTracks()[0];
+      socket.emit('group-call-media-state', {
+        conversationId: data.conversationId,
+        videoEnabled: videoTrack ? videoTrack.enabled : false,
+        audioEnabled: audioTrack ? audioTrack.enabled : true,
+        handRaised: isHandRaisedRef.current,
+        footRaised: isFootRaisedRef.current,
+      });
+    });
+
+    socket.on('group-call-offer', async (data: {
+      from: string;
+      offer: any;
+      conversationId: string;
+    }) => {
+      const stream = groupLocalStreamRef.current;
+      if (!stream) return;
+
+      try {
+        const pc = createGroupPeerConnection(data.from, stream);
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        socket.emit('group-call-answer', {
+          to: data.from,
+          answer,
+          conversationId: data.conversationId,
+        });
+      } catch (e) {
+        console.error(`Failed to handle offer from ${data.from}`, e);
+      }
+    });
+
+    socket.on('group-call-answer', async (data: {
+      from: string;
+      answer: any;
+      conversationId: string;
+    }) => {
+      const pc = groupPeerConnectionsRef.current.get(data.from);
+      if (pc) {
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        } catch (e) {
+          console.error(`Failed to set answer from ${data.from}`, e);
+        }
+      }
+    });
+
+    socket.on('group-ice-candidate', async (data: {
+      from: string;
+      candidate: any;
+      conversationId: string;
+    }) => {
+      const pc = groupPeerConnectionsRef.current.get(data.from);
+      if (pc) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+          console.error(`Failed to add ICE candidate from ${data.from}`, e);
+        }
+      }
+    });
+
+    socket.on('group-call-user-left', (data: {
+      userId: string;
+      conversationId: string;
+    }) => {
+      removeGroupPeer(data.userId);
+    });
+
+    socket.on('group-call-ended', (data: {
+      conversationId: string;
+    }) => {
+      setActiveGroupCall(prev => prev ? { ...prev, status: 'ended' } : null);
+      setTimeout(() => cleanupGroupCall(), 2000);
+    });
+
+    socket.on('group-call-error', (data: { reason: string }) => {
+      alert(`Group call error: ${data.reason}`);
+      cleanupGroupCall();
+    });
+
+    // Handle incoming ephemeral meeting chat messages
+    socket.on('group-call-chat-message-received', (msg: GroupChatMessage) => {
+      setGroupCallMessages(prev => [...prev, msg]);
+    });
+
+    // Handle incoming ephemeral emoji reactions
+    socket.on('group-call-emoji-received', (data: { userId: string; emoji: string }) => {
+      setLatestEmojiReaction({
+        userId: data.userId,
+        emoji: data.emoji,
+        id: Date.now() + Math.random(),
+      });
+    });
+
+    // Handle camera and audio status changes of other peers
+    socket.on('group-call-media-state-received', (data: { userId: string; videoEnabled: boolean; audioEnabled: boolean; handRaised?: boolean; footRaised?: boolean; isScreenSharing?: boolean }) => {
+      setGroupCallVideoStates(prev => ({
+        ...prev,
+        [data.userId]: data.videoEnabled,
+      }));
+      setGroupMutedUserIds(prev => {
+        const next = new Set(prev);
+        if (data.audioEnabled === false) {
+          next.add(data.userId);
+        } else {
+          next.delete(data.userId);
+        }
+        return next;
+      });
+      if (data.handRaised !== undefined) {
+        setGroupCallHandRaisedStates(prev => ({
+          ...prev,
+          [data.userId]: data.handRaised || false,
+        }));
+      }
+      if (data.footRaised !== undefined) {
+        setGroupCallFootRaisedStates(prev => ({
+          ...prev,
+          [data.userId]: data.footRaised || false,
+        }));
+      }
+      if (data.isScreenSharing !== undefined) {
+        setGroupCallScreenSharingStates(prev => ({
+          ...prev,
+          [data.userId]: data.isScreenSharing || false,
+        }));
+      }
+    });
+
+    // Handle force mute by admin/creator
+    socket.on('group-call-force-muted', (data: { conversationId: string }) => {
+      const stream = groupLocalStreamRef.current;
+      if (stream) {
+        const audioTrack = stream.getAudioTracks()[0];
+        if (audioTrack && audioTrack.enabled) {
+          audioTrack.enabled = false;
+          setIsGroupMuted(true);
+          const videoTrack = stream.getVideoTracks()[0];
+          socket.emit('group-call-media-state', {
+            conversationId: data.conversationId,
+            videoEnabled: videoTrack ? videoTrack.enabled : false,
+            audioEnabled: false,
+            handRaised: isHandRaisedRef.current,
+            footRaised: isFootRaisedRef.current,
+          });
+        }
+      }
+    });
+
+    // Handle force unmute by admin/creator
+    socket.on('group-call-force-unmuted', (data: { conversationId: string }) => {
+      const stream = groupLocalStreamRef.current;
+      if (stream) {
+        const audioTrack = stream.getAudioTracks()[0];
+        if (audioTrack && !audioTrack.enabled) {
+          audioTrack.enabled = true;
+          setIsGroupMuted(false);
+          const videoTrack = stream.getVideoTracks()[0];
+          socket.emit('group-call-media-state', {
+            conversationId: data.conversationId,
+            videoEnabled: videoTrack ? videoTrack.enabled : false,
+            audioEnabled: true,
+            handRaised: isHandRaisedRef.current,
+            footRaised: isFootRaisedRef.current,
+          });
+        }
+      }
+    });
+
+    return () => {
+      socket.off('group-call-incoming');
+      socket.off('group-call-started');
+      socket.off('group-call-joined');
+      socket.off('group-call-user-joined');
+      socket.off('group-call-offer');
+      socket.off('group-call-answer');
+      socket.off('group-ice-candidate');
+      socket.off('group-call-user-left');
+      socket.off('group-call-ended');
+      socket.off('group-call-error');
+      socket.off('group-call-chat-message-received');
+      socket.off('group-call-emoji-received');
+      socket.off('group-call-media-state-received');
+      socket.off('group-call-force-muted');
+      socket.off('group-call-force-unmuted');
+    };
+  }, [socket, createGroupPeerConnection, removeGroupPeer, cleanupGroupCall]);
+
+  // ─── Group Call Actions ───
+
+  const startGroupCall = useCallback(async (
+    conversationId: string,
+    groupName: string,
+    type: 'AUDIO' | 'VIDEO'
+  ) => {
+    if (!socket || !user) return;
+
+    try {
+      const stream = await initMedia(type, true);
+      setGroupLocalStream(stream);
+      groupLocalStreamRef.current = stream;
+      setIsGroupMuted(false);
+      setIsGroupVideoMuted(type === 'VIDEO' ? false : true);
+
+      setActiveGroupCall({
+        role: 'initiator',
+        type,
+        conversationId,
+        groupName,
+        status: 'connecting',
+        participants: [],
+      });
+
+      socket.emit('group-call-initiate', { conversationId, type });
+    } catch (e) {
+      console.error('Failed to start group call', e);
+      cleanupGroupCall();
+    }
+  }, [socket, user, cleanupGroupCall]);
+
+  const joinGroupCall = useCallback(async (convoIdToJoin?: string, convoTypeToJoin?: 'AUDIO' | 'VIDEO') => {
+    const activeConvoId = convoIdToJoin && typeof convoIdToJoin === 'string' ? convoIdToJoin : activeGroupCall?.conversationId || currentConvoId;
+    const callType = convoTypeToJoin && typeof convoTypeToJoin === 'string' ? convoTypeToJoin : activeGroupCall?.type || groupCallStatus?.type || 'VIDEO';
+
+    if (!activeConvoId || !socket) return;
+
+    try {
+      audioSynthRef.current?.stop();
+      
+      setActiveGroupCall({
+        role: 'participant',
+        type: callType,
+        conversationId: activeConvoId,
+        groupName: activeGroupCall?.groupName || 'Group',
+        status: 'connecting',
+        participants: activeGroupCall?.participants || [],
+      });
+
+      const stream = await initMedia(callType, true);
+      setGroupLocalStream(stream);
+      groupLocalStreamRef.current = stream;
+      setIsGroupMuted(false);
+      setIsGroupVideoMuted(callType === 'VIDEO' ? false : true);
+
+      socket.emit('group-call-join', {
+        conversationId: activeConvoId,
+        type: callType,
+      });
+    } catch (e) {
+      console.error('Failed to join group call', e);
+      cleanupGroupCall();
+    }
+  }, [activeGroupCall, groupCallStatus, currentConvoId, socket, cleanupGroupCall]);
+
+  const rejectGroupCall = useCallback(() => {
+    if (!activeGroupCall || !socket) return;
+    audioSynthRef.current?.stop();
+    socket.emit('group-call-reject', {
+      conversationId: activeGroupCall.conversationId,
+    });
+    setActiveGroupCall(null);
+  }, [activeGroupCall, socket]);
+
+  const leaveGroupCall = useCallback(() => {
+    const activeCallConvoId = activeGroupCall?.conversationId || currentConvoId;
+    if (!activeCallConvoId || !socket) return;
+    socket.emit('group-call-leave', {
+      conversationId: activeCallConvoId,
+      duration: groupCallDuration,
+    });
+    cleanupGroupCall();
+  }, [activeGroupCall, currentConvoId, socket, groupCallDuration, cleanupGroupCall]);
+
+  const toggleGroupMute = useCallback(() => {
+    const stream = groupLocalStreamRef.current;
+    if (!stream) return;
+    const audioTrack = stream.getAudioTracks()[0];
+    if (audioTrack) {
+      audioTrack.enabled = !audioTrack.enabled;
+      setIsGroupMuted(!audioTrack.enabled);
+
+      if (socket && activeGroupCallRef.current) {
+        const videoTrack = stream.getVideoTracks()[0];
+        socket.emit('group-call-media-state', {
+          conversationId: activeGroupCallRef.current.conversationId,
+          videoEnabled: videoTrack ? videoTrack.enabled : false,
+          audioEnabled: audioTrack.enabled,
+          handRaised: isHandRaisedRef.current,
+          footRaised: isFootRaisedRef.current,
+        });
+      }
+    }
+  }, [socket]);
+
+  const toggleGroupVideo = useCallback(() => {
+    const stream = groupLocalStreamRef.current;
+    if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.enabled = !videoTrack.enabled;
+      setIsGroupVideoMuted(!videoTrack.enabled);
+
+      if (socket && activeGroupCallRef.current) {
+        socket.emit('group-call-media-state', {
+          conversationId: activeGroupCallRef.current.conversationId,
+          videoEnabled: videoTrack.enabled,
+          audioEnabled: !isGroupMuted,
+          handRaised: isHandRaisedRef.current,
+          footRaised: isFootRaisedRef.current,
+        });
+      }
+    }
+  }, [socket, isGroupMuted]);
+
+  const toggleGroupScreenShare = useCallback(async () => {
+    const stream = groupLocalStreamRef.current;
+    if (!stream) return;
+
+    if (!isGroupScreenSharing) {
+      try {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+        groupScreenTrackRef.current = screenTrack;
+
+        for (const [, pc] of groupPeerConnectionsRef.current) {
+          const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+          if (videoSender) {
+            await videoSender.replaceTrack(screenTrack);
+            applyGroupSenderEncodingParams(pc, true);
+          }
+        }
+
+        screenTrack.onended = () => {
+          stopGroupScreenShareHelper();
+        };
+
+        setIsGroupScreenSharing(true);
+
+        if (socket && activeGroupCallRef.current) {
+          const audioTrack = stream.getAudioTracks()[0];
+          socket.emit('group-call-media-state', {
+            conversationId: activeGroupCallRef.current.conversationId,
+            videoEnabled: true,
+            audioEnabled: audioTrack ? audioTrack.enabled : !isGroupMuted,
+            handRaised: isHandRaisedRef.current,
+            footRaised: isFootRaisedRef.current,
+            isScreenSharing: true,
+          });
+        }
+      } catch (err) {
+        console.error('Error starting group screen share', err);
+      }
+    } else {
+      stopGroupScreenShareHelper();
+    }
+  }, [isGroupScreenSharing, isGroupMuted, socket, applyGroupSenderEncodingParams]);
+
+  const stopGroupScreenShareHelper = useCallback(async () => {
+    if (groupScreenTrackRef.current) {
+      groupScreenTrackRef.current.stop();
+      groupScreenTrackRef.current = null;
+    }
+
+    const stream = groupLocalStreamRef.current;
+    if (stream) {
+      const webcamTrack = stream.getVideoTracks()[0];
+      for (const [, pc] of groupPeerConnectionsRef.current) {
+        const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (videoSender && webcamTrack) {
+          await videoSender.replaceTrack(webcamTrack);
+          applyGroupSenderEncodingParams(pc, false);
+        }
+      }
+    }
+    setIsGroupScreenSharing(false);
+
+    if (socket && activeGroupCallRef.current) {
+      const videoTrack = stream ? stream.getVideoTracks()[0] : null;
+      const audioTrack = stream ? stream.getAudioTracks()[0] : null;
+      socket.emit('group-call-media-state', {
+        conversationId: activeGroupCallRef.current.conversationId,
+        videoEnabled: videoTrack ? videoTrack.enabled : false,
+        audioEnabled: audioTrack ? audioTrack.enabled : !isGroupMuted,
+        handRaised: isHandRaisedRef.current,
+        footRaised: isFootRaisedRef.current,
+        isScreenSharing: false,
+      });
+    }
+  }, [socket, isGroupMuted, applyGroupSenderEncodingParams]);
+
+  const sendGroupCallMessage = useCallback((message: string) => {
+    const activeCallConvoId = activeGroupCall?.conversationId || currentConvoId;
+    if (!activeCallConvoId || !socket || !message.trim()) return;
+
+    const msgData: GroupChatMessage = {
+      senderId: user?.id || 'unknown',
+      senderName: user?.name || user?.username || 'You',
+      message: message.trim(),
+      timestamp: Date.now(),
+    };
+
+    // Add locally immediately
+    setGroupCallMessages(prev => [...prev, msgData]);
+
+    // Send to other peers
+    socket.emit('group-call-chat-message', {
+      conversationId: activeCallConvoId,
+      message: msgData.message,
+      senderName: msgData.senderName,
+    });
+  }, [activeGroupCall, currentConvoId, socket, user]);
+
+  const triggerGroupCallEmoji = useCallback((emoji: string) => {
+    const activeCallConvoId = activeGroupCall?.conversationId || currentConvoId;
+    if (!activeCallConvoId || !socket) return;
+
+    // Set locally
+    setLatestEmojiReaction({
+      userId: user?.id || 'unknown',
+      emoji,
+      id: Date.now() + Math.random(),
+    });
+
+    // Send to other peers
+    socket.emit('group-call-emoji', {
+      conversationId: activeCallConvoId,
+      emoji,
+    });
+  }, [activeGroupCall, currentConvoId, socket, user]);
+
+  const adminMuteAll = useCallback(() => {
+    const activeCallConvoId = activeGroupCall?.conversationId || currentConvoId;
+    if (!activeCallConvoId || !socket) return;
+    socket.emit('group-call-admin-mute-all', { conversationId: activeCallConvoId });
+  }, [activeGroupCall, currentConvoId, socket]);
+
+  const toggleHandRaise = useCallback(() => {
+    setIsHandRaised(prev => {
+      const nextVal = !prev;
+      isHandRaisedRef.current = nextVal;
+      if (user) {
+        setGroupCallHandRaisedStates(prevStates => ({
+          ...prevStates,
+          [user.id]: nextVal,
+        }));
+      }
+      if (socket && activeGroupCallRef.current) {
+        const stream = groupLocalStreamRef.current;
+        const videoTrack = stream?.getVideoTracks()[0];
+        const audioTrack = stream?.getAudioTracks()[0];
+        socket.emit('group-call-media-state', {
+          conversationId: activeGroupCallRef.current.conversationId,
+          videoEnabled: videoTrack ? videoTrack.enabled : false,
+          audioEnabled: audioTrack ? audioTrack.enabled : true,
+          handRaised: nextVal,
+          footRaised: isFootRaisedRef.current,
+        });
+      }
+      return nextVal;
+    });
+  }, [socket, user]);
+
+  const toggleFootRaise = useCallback(() => {
+    setIsFootRaised(prev => {
+      const nextVal = !prev;
+      isFootRaisedRef.current = nextVal;
+      if (user) {
+        setGroupCallFootRaisedStates(prevStates => ({
+          ...prevStates,
+          [user.id]: nextVal,
+        }));
+      }
+      if (socket && activeGroupCallRef.current) {
+        const stream = groupLocalStreamRef.current;
+        const videoTrack = stream?.getVideoTracks()[0];
+        const audioTrack = stream?.getAudioTracks()[0];
+        socket.emit('group-call-media-state', {
+          conversationId: activeGroupCallRef.current.conversationId,
+          videoEnabled: videoTrack ? videoTrack.enabled : false,
+          audioEnabled: audioTrack ? audioTrack.enabled : true,
+          handRaised: isHandRaisedRef.current,
+          footRaised: nextVal,
+        });
+      }
+      return nextVal;
+    });
+  }, [socket, user]);
+
+  const adminMuteUser = useCallback((targetUserId: string) => {
+    const activeCallConvoId = activeGroupCall?.conversationId || currentConvoId;
+    if (!activeCallConvoId || !socket) return;
+    socket.emit('group-call-admin-mute-user', { conversationId: activeCallConvoId, targetUserId });
+  }, [activeGroupCall, currentConvoId, socket]);
+
+  const adminUnmuteUser = useCallback((targetUserId: string) => {
+    const activeCallConvoId = activeGroupCall?.conversationId || currentConvoId;
+    if (!activeCallConvoId || !socket) return;
+    socket.emit('group-call-admin-unmute-user', { conversationId: activeCallConvoId, targetUserId });
+  }, [activeGroupCall, currentConvoId, socket]);
+
+  // ═══════════════════════════════════════════════════════════
+  // PROVIDER
+  // ═══════════════════════════════════════════════════════════
+
+  return (
+    <CallContext.Provider
+      value={{
+        // 1:1 call
+        activeCall,
+        localStream,
+        remoteStream,
+        callDuration,
+        isMuted,
+        isVideoMuted,
+        isScreenSharing,
+        startCall,
+        acceptCall,
+        rejectCall,
+        endCall,
+        toggleMute,
+        toggleVideo,
+        toggleScreenShare,
+
+        // Group call
+        activeGroupCall,
+        groupLocalStream,
+        groupRemoteStreams,
+        groupCallDuration,
+        isGroupMuted,
+        isGroupVideoMuted,
+        isGroupScreenSharing,
+        currentConvoId,
+        setCurrentConvoId,
+        groupCallStatus,
+        groupCallMessages,
+        latestEmojiReaction,
+        groupCallVideoStates,
+        groupCallScreenSharingStates,
+        groupMutedUserIds,
+        myGroupRole,
+        isHandRaised,
+        isFootRaised,
+        groupCallHandRaisedStates,
+        groupCallFootRaisedStates,
+        startGroupCall,
+        joinGroupCall,
+        rejectGroupCall,
+        leaveGroupCall,
+        toggleGroupMute,
+        toggleGroupVideo,
+        toggleGroupScreenShare,
+        sendGroupCallMessage,
+        triggerGroupCallEmoji,
+        adminMuteAll,
+        toggleHandRaise,
+        toggleFootRaise,
+        adminMuteUser,
+        adminUnmuteUser,
+      }}
+    >
+      {children}
+    </CallContext.Provider>
+  );
+};
+
+export const useCall = () => {
+  const context = useContext(CallContext);
+  if (!context) throw new Error('useCall must be used within a CallProvider');
+  return context;
+};
