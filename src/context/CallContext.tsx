@@ -113,27 +113,30 @@ interface CallContextType {
 
 const CallContext = createContext<CallContextType | undefined>(undefined);
 
-const iceConfig: RTCConfiguration = {
+// Fallback STUN-only config (used until TURN credentials are fetched)
+const FALLBACK_ICE_CONFIG: RTCConfiguration = {
   iceServers: [
-    // Free global STUN servers
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-
-    // Free Global TURN Relay Servers (Essential for Mobile 4G/5G <-> Broadband WiFi Symmetric NAT traversal)
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp',
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
   ],
   iceCandidatePoolSize: 10,
 };
+
+// Metered.ca TURN Server API (Free 500MB/month)
+const METERED_API_URL =
+  'https://whatscordigram.metered.live/api/v1/turn/credentials?apiKey=7fe865cc807907397100003469b7da353ab7';
+
+async function fetchTurnConfig(): Promise<RTCConfiguration> {
+  try {
+    const response = await fetch(METERED_API_URL);
+    const iceServers = await response.json();
+    console.log('[TURN] Fetched Metered TURN credentials:', iceServers.length, 'servers');
+    return { iceServers, iceCandidatePoolSize: 10 };
+  } catch (err) {
+    console.warn('[TURN] Failed to fetch TURN credentials, using STUN-only fallback', err);
+    return FALLBACK_ICE_CONFIG;
+  }
+}
 
 // ─── Audio Synthesizer (shared) ───
 
@@ -290,6 +293,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const screenTrackRef = useRef<MediaStreamTrack | null>(null);
   const audioSynthRef = useRef<CallAudioSynthesizer | null>(null);
   const activeCallRef = useRef<ActiveCall | null>(null);
+  const iceConfigRef = useRef<RTCConfiguration>(FALLBACK_ICE_CONFIG);
 
   // ─── Group Call State ───
 
@@ -329,6 +333,13 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const activeGroupCallRef = useRef<ActiveGroupCall | null>(null);
 
   // ─── Sync refs ───
+
+  // Fetch TURN credentials from Metered.ca on mount
+  useEffect(() => {
+    fetchTurnConfig().then((config) => {
+      iceConfigRef.current = config;
+    });
+  }, []);
 
   useEffect(() => {
     activeCallRef.current = activeCall;
@@ -589,7 +600,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const setupPeerConnection = (stream: MediaStream, targetUserId: string) => {
-    const pc = new RTCPeerConnection(iceConfig);
+    const pc = new RTCPeerConnection(iceConfigRef.current);
 
     stream.getTracks().forEach((track) => {
       pc.addTrack(track, stream);
@@ -837,7 +848,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Helper: create a peer connection for a specific group peer
   const createGroupPeerConnection = useCallback((peerId: string, stream: MediaStream): RTCPeerConnection => {
-    const pc = new RTCPeerConnection(iceConfig);
+    const pc = new RTCPeerConnection(iceConfigRef.current);
 
     stream.getTracks().forEach((track) => {
       pc.addTrack(track, stream);

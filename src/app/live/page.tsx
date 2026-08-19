@@ -23,23 +23,16 @@ interface ChatMessage {
   createdAt: Date;
 }
 
-const iceConfig = {
+// Fallback STUN-only config (used until TURN credentials are fetched)
+const FALLBACK_ICE_CONFIG: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp',
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
   ],
 };
+
+const METERED_API_URL =
+  'https://whatscordigram.metered.live/api/v1/turn/credentials?apiKey=7fe865cc807907397100003469b7da353ab7';
 
 export default function LivePage() {
   const { socket, onlineUsers } = useSocket();
@@ -85,6 +78,18 @@ export default function LivePage() {
 
   // Queue to buffer WebRTC signals that arrive before the peer connection is fully initialized
   const signalQueueRef = useRef<any[]>([]);
+  const iceConfigRef = useRef<RTCConfiguration>(FALLBACK_ICE_CONFIG);
+
+  // Fetch TURN credentials from Metered.ca on mount
+  useEffect(() => {
+    fetch(METERED_API_URL)
+      .then((res) => res.json())
+      .then((iceServers) => {
+        iceConfigRef.current = { iceServers };
+        console.log('[TURN] Live page: fetched', iceServers.length, 'servers');
+      })
+      .catch((err) => console.warn('[TURN] Live page: fetch failed', err));
+  }, []);
 
   // Redirect if not logged in
   useEffect(() => {
@@ -282,7 +287,7 @@ export default function LivePage() {
     signalQueueRef.current = [];
 
     const stream = await initLocalMedia();
-    const pc = new RTCPeerConnection(iceConfig);
+    const pc = new RTCPeerConnection(iceConfigRef.current);
 
     stream.getTracks().forEach((track) => {
       pc.addTrack(track, stream);
