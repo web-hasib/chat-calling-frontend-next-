@@ -69,6 +69,8 @@ interface CallContextType {
   isMuted: boolean;
   isVideoMuted: boolean;
   isScreenSharing: boolean;
+  isPeerVideoMuted: boolean;
+  isPeerScreenSharing: boolean;
   startCall: (targetUserId: string, targetName: string, targetAvatar: string, type: 'AUDIO' | 'VIDEO', conversationId: string) => Promise<void>;
   acceptCall: () => Promise<void>;
   rejectCall: () => void;
@@ -295,6 +297,8 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isVideoMuted, setIsVideoMuted] = useState<boolean>(false);
   const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
+  const [isPeerVideoMuted, setIsPeerVideoMuted] = useState<boolean>(false);
+  const [isPeerScreenSharing, setIsPeerScreenSharing] = useState<boolean>(false);
 
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const incomingOfferRef = useRef<any>(null);
@@ -511,7 +515,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       audioSynthRef.current?.startRingtoneIncoming();
     });
 
-    socket.on('call-accepted', async (data: { answer: any }) => {
+    socket.on('call-accepted', async (data: { answer: any; receiverName?: string; receiverAvatar?: string }) => {
       if (peerConnectionRef.current) {
         try {
           audioSynthRef.current?.stop();
@@ -529,7 +533,12 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             earlyCandidatesRef.current = [];
           }
 
-          setActiveCall(prev => prev ? { ...prev, status: 'connected' } : null);
+          setActiveCall(prev => prev ? { 
+            ...prev, 
+            status: 'connected',
+            peerName: data.receiverName || prev.peerName,
+            peerAvatar: data.receiverAvatar || prev.peerAvatar,
+          } : null);
           startCallTimer();
         } catch (e) {
           console.error('Error setting remote description', e);
@@ -547,6 +556,15 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } else {
         earlyCandidatesRef.current.push(data.candidate);
+      }
+    });
+
+    socket.on('call-media-state', (data: { videoEnabled?: boolean; audioEnabled?: boolean; isScreenSharing?: boolean }) => {
+      if (typeof data.videoEnabled === 'boolean') {
+        setIsPeerVideoMuted(!data.videoEnabled);
+      }
+      if (typeof data.isScreenSharing === 'boolean') {
+        setIsPeerScreenSharing(data.isScreenSharing);
       }
     });
 
@@ -576,6 +594,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       socket.off('incoming-call');
       socket.off('call-accepted');
       socket.off('ice-candidate');
+      socket.off('call-media-state');
       socket.off('call-rejected');
       socket.off('call-ended');
       socket.off('call-failed');
@@ -748,6 +767,8 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       socket.emit('accept-call', {
         to: activeCall.peerId,
         answer,
+        receiverName: user?.name,
+        receiverAvatar: user?.avatarUrl,
       });
 
       setActiveCall(prev => prev ? { ...prev, status: 'connected' } : null);
@@ -784,7 +805,16 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const audioTrack = localStream.getAudioTracks()[0];
     if (audioTrack) {
       audioTrack.enabled = !audioTrack.enabled;
-      setIsMuted(!audioTrack.enabled);
+      const nextMuted = !audioTrack.enabled;
+      setIsMuted(nextMuted);
+      if (socket && activeCallRef.current) {
+        socket.emit('call-media-state', {
+          to: activeCallRef.current.peerId,
+          videoEnabled: !isVideoMuted,
+          audioEnabled: !nextMuted,
+          isScreenSharing,
+        });
+      }
     }
   };
 
@@ -793,22 +823,34 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const videoTrack = localStream.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.enabled = !videoTrack.enabled;
-      setIsVideoMuted(!videoTrack.enabled);
+      const nextVideoMuted = !videoTrack.enabled;
+      setIsVideoMuted(nextVideoMuted);
+      if (socket && activeCallRef.current) {
+        socket.emit('call-media-state', {
+          to: activeCallRef.current.peerId,
+          videoEnabled: !nextVideoMuted,
+          audioEnabled: !isMuted,
+          isScreenSharing,
+        });
+      }
     }
   };
 
   const toggleScreenShare = async () => {
-    if (!peerConnectionRef.current || !localStream) return;
+    if (!peerConnectionRef.current) return;
 
     if (!isScreenSharing) {
       try {
         const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         const screenTrack = screenStream.getVideoTracks()[0];
+        if (!screenTrack) return;
         screenTrackRef.current = screenTrack;
 
         const videoSender = peerConnectionRef.current.getSenders().find(s => s.track?.kind === 'video');
         if (videoSender) {
           await videoSender.replaceTrack(screenTrack);
+        } else {
+          peerConnectionRef.current.addTrack(screenTrack, localStream || new MediaStream());
         }
 
         screenTrack.onended = () => {
@@ -816,6 +858,14 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         setIsScreenSharing(true);
+        if (socket && activeCallRef.current) {
+          socket.emit('call-media-state', {
+            to: activeCallRef.current.peerId,
+            videoEnabled: true,
+            audioEnabled: !isMuted,
+            isScreenSharing: true,
+          });
+        }
       } catch (err) {
         console.error('Error starting screen share', err);
       }
@@ -838,11 +888,21 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
     setIsScreenSharing(false);
+    if (socket && activeCallRef.current) {
+      socket.emit('call-media-state', {
+        to: activeCallRef.current.peerId,
+        videoEnabled: !isVideoMuted,
+        audioEnabled: !isMuted,
+        isScreenSharing: false,
+      });
+    }
   };
 
   const cleanupCall = () => {
     audioSynthRef.current?.stop();
     stopCallTimer();
+    setIsPeerVideoMuted(false);
+    setIsPeerScreenSharing(false);
     if (screenTrackRef.current) {
       screenTrackRef.current.stop();
       screenTrackRef.current = null;
@@ -1734,6 +1794,8 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isMuted,
         isVideoMuted,
         isScreenSharing,
+        isPeerVideoMuted,
+        isPeerScreenSharing,
         startCall,
         acceptCall,
         rejectCall,

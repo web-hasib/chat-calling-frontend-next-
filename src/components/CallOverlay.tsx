@@ -23,7 +23,7 @@ interface FloatingEmoji {
   rotate: number;
 }
 
-const getDiscordAdaptiveBg = (userId: string) => {
+export const getDiscordAdaptiveBg = (userId: string) => {
   const colors = [
     '#3c2f2f', // Dark reddish brown
     '#2f3c37', // Dark sage green
@@ -226,6 +226,8 @@ const CallOverlay: React.FC = () => {
     isMuted,
     isVideoMuted,
     isScreenSharing,
+    isPeerVideoMuted,
+    isPeerScreenSharing,
     acceptCall,
     rejectCall,
     endCall,
@@ -1373,6 +1375,8 @@ const CallOverlay: React.FC = () => {
       isMuted={isMuted}
       isVideoMuted={isVideoMuted}
       isScreenSharing={isScreenSharing}
+      isPeerVideoMuted={isPeerVideoMuted}
+      isPeerScreenSharing={isPeerScreenSharing}
       formatTime={formatTime}
       onAccept={acceptCall}
       onReject={rejectCall}

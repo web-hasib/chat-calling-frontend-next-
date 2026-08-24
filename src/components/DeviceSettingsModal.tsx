@@ -15,6 +15,8 @@ interface DeviceSettingsModalProps {
   isFootRaised?: boolean;
   onToggleFootRaise?: () => void;
   onAdminMuteAll?: () => void;
+  isScreenSharing?: boolean;
+  onToggleScreenShare?: () => void;
 }
 
 export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
@@ -28,6 +30,8 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
   isFootRaised,
   onToggleFootRaise,
   onAdminMuteAll,
+  isScreenSharing,
+  onToggleScreenShare,
 }) => {
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
@@ -174,12 +178,37 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
         )}
 
         {/* Additional Call Actions */}
-        {(onToggleFullscreen || onToggleFootRaise || onAdminMuteAll) && (
+        {(onToggleFullscreen || onToggleFootRaise || onAdminMuteAll || onToggleScreenShare) && (
           <div style={{ marginTop: '22px', paddingTop: '18px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <span style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
               More Controls
             </span>
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              {onToggleScreenShare && (
+                <button
+                  type="button"
+                  onClick={() => { onToggleScreenShare(); onClose(); }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '10px 16px',
+                    borderRadius: '14px',
+                    background: isScreenSharing ? 'rgba(99, 102, 241, 0.35)' : 'rgba(255,255,255,0.07)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    border: isScreenSharing ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
+                    color: isScreenSharing ? '#c7d2fe' : '#f8fafc',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  }}
+                >
+                  <span>💻</span> {isScreenSharing ? 'Stop Screen Share' : 'Share Screen'}
+                </button>
+              )}
               {onToggleFullscreen && (
                 <button
                   type="button"

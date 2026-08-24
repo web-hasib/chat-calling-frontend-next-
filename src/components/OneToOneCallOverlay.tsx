@@ -2,15 +2,18 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import styles from './CallOverlay.module.css';
-import { Phone, PhoneOff, Mic, MicOff, Video as VideoOn, VideoOff, Monitor, Settings, Volume2, Smartphone, Shield } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Video as VideoOn, VideoOff, Monitor, Settings, Volume2, Smartphone, Shield, MoreVertical } from 'lucide-react';
 import { DeviceSettingsModal } from './DeviceSettingsModal';
 import { startIncomingCallRingtoneLoop, stopIncomingCallRingtoneLoop } from '../utils/notifications';
+import { getDiscordAdaptiveBg } from './CallOverlay';
+import { useAuth } from '../context/AuthContext';
 
 interface OneToOneCallOverlayProps {
   activeCall: {
     type: 'AUDIO' | 'VIDEO';
     status: 'idle' | 'ringing' | 'connecting' | 'connected' | 'busy' | 'declined' | 'ended';
     role: 'caller' | 'receiver';
+    peerId?: string;
     peerName?: string;
     peerAvatar?: string;
   };
@@ -20,6 +23,8 @@ interface OneToOneCallOverlayProps {
   isMuted: boolean;
   isVideoMuted: boolean;
   isScreenSharing: boolean;
+  isPeerVideoMuted?: boolean;
+  isPeerScreenSharing?: boolean;
   formatTime: (sec: number) => string;
   onAccept: () => void;
   onReject: () => void;
@@ -37,6 +42,8 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
   isMuted,
   isVideoMuted,
   isScreenSharing,
+  isPeerVideoMuted = false,
+  isPeerScreenSharing = false,
   formatTime,
   onAccept,
   onReject,
@@ -45,10 +52,18 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
   onToggleVideo,
   onToggleScreenShare,
 }) => {
+  const { user: currentUser } = useAuth();
   const localVideoElRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoElRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioElRef = useRef<HTMLAudioElement | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  // Auto-hide controls & timer state (4s inactivity)
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Track remote video stream track state
+  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
 
   // Mobile environment & Audio routing states
   const [isMobile, setIsMobile] = useState(false);
@@ -60,6 +75,67 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
   const [isDocked, setIsDocked] = useState<'left' | 'right' | null>(null);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
+
+  // Inactivity auto-hide timer handler
+  const handleUserActivity = useCallback(() => {
+    setControlsVisible(true);
+    if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+    hideTimeoutRef.current = setTimeout(() => {
+      setControlsVisible(false);
+    }, 4000);
+  }, []);
+
+  // Track remote video stream live tracks
+  useEffect(() => {
+    if (!remoteStream) {
+      setHasRemoteVideo(false);
+      return;
+    }
+    const checkTracks = () => {
+      const vTracks = remoteStream.getVideoTracks();
+      const hasLive = vTracks.some((t) => t.enabled && t.readyState === 'live' && !t.muted);
+      setHasRemoteVideo(hasLive && vTracks.length > 0);
+    };
+    checkTracks();
+
+    const vTracks = remoteStream.getVideoTracks();
+    vTracks.forEach((t) => {
+      t.addEventListener('mute', checkTracks);
+      t.addEventListener('unmute', checkTracks);
+      t.addEventListener('ended', checkTracks);
+    });
+
+    const interval = setInterval(checkTracks, 1000);
+
+    return () => {
+      clearInterval(interval);
+      vTracks.forEach((t) => {
+        t.removeEventListener('mute', checkTracks);
+        t.removeEventListener('unmute', checkTracks);
+        t.removeEventListener('ended', checkTracks);
+      });
+    };
+  }, [remoteStream]);
+
+  // Trigger initial activity timeout on connect
+  useEffect(() => {
+    if (activeCall.status === 'connected' && activeCall.type === 'VIDEO') {
+      handleUserActivity();
+    }
+    return () => {
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+    };
+  }, [activeCall.status, activeCall.type, handleUserActivity]);
+
+  // Keep controls visible whenever settings modal is open
+  useEffect(() => {
+    if (showSettingsModal) {
+      setControlsVisible(true);
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+    } else {
+      handleUserActivity();
+    }
+  }, [showSettingsModal, handleUserActivity]);
 
   // Detect mobile / touch environment
   useEffect(() => {
@@ -146,6 +222,7 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
 
   const startClientPosRef = useRef({ x: 0, y: 0 });
   const didDragMovedRef = useRef(false);
+  const currentPosRef = useRef({ x: 0, y: 0 });
 
   const handlePointerDown = (e: React.PointerEvent) => {
     isDraggingRef.current = true;
@@ -165,20 +242,21 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
       didDragMovedRef.current = true;
     }
 
+    const pipWidth = typeof window !== 'undefined' && window.innerWidth <= 768 ? 100 : 120;
+    const padding = typeof window !== 'undefined' && window.innerWidth <= 768 ? 16 : 24;
+
     let newX = e.clientX - dragStartRef.current.x;
     let newY = e.clientY - dragStartRef.current.y;
 
-    const padding = 16;
-    const pipWidth = 110;
-
     const minX = -(window.innerWidth - pipWidth - padding);
-    const maxX = pipWidth + 20;
+    const maxX = pipWidth + padding;
     const minY = -window.innerHeight + 160 + padding;
     const maxY = padding;
 
     newX = Math.max(minX - 30, Math.min(newX, maxX + 30));
     newY = Math.max(minY, Math.min(newY, maxY));
 
+    currentPosRef.current = { x: newX, y: newY };
     setPosition({ x: newX, y: newY });
   };
 
@@ -189,16 +267,19 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {}
 
-    const padding = 16;
-    const pipWidth = 110;
+    const pipWidth = typeof window !== 'undefined' && window.innerWidth <= 768 ? 100 : 120;
+    const padding = typeof window !== 'undefined' && window.innerWidth <= 768 ? 16 : 24;
     const minX = -(window.innerWidth - pipWidth - padding);
 
     // If tapped without dragging, and is currently docked -> undock immediately
     if (!didDragMovedRef.current) {
       if (isDocked) {
         if (isDocked === 'left') {
-          setPosition(prev => ({ ...prev, x: minX + 20 }));
+          const undockX = minX + 24;
+          currentPosRef.current.x = undockX;
+          setPosition(prev => ({ ...prev, x: undockX }));
         } else {
+          currentPosRef.current.x = 0;
           setPosition(prev => ({ ...prev, x: 0 }));
         }
         setIsDocked(null);
@@ -206,12 +287,20 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
       return;
     }
 
-    if (position.x <= minX + 60) {
+    const finalX = currentPosRef.current.x;
+
+    if (finalX <= minX + 60) {
+      // Dock to left edge (leaves 22px tab visible)
       setIsDocked('left');
-      setPosition(prev => ({ ...prev, x: minX - pipWidth + 22 }));
-    } else if (position.x >= 20) {
+      const dockLeftX = minX - pipWidth + 22;
+      currentPosRef.current.x = dockLeftX;
+      setPosition(prev => ({ ...prev, x: dockLeftX }));
+    } else if (finalX >= 20) {
+      // Dock to right edge (leaves 22px tab visible)
       setIsDocked('right');
-      setPosition(prev => ({ ...prev, x: pipWidth + 20 - 22 }));
+      const dockRightX = pipWidth + padding - 22;
+      currentPosRef.current.x = dockRightX;
+      setPosition(prev => ({ ...prev, x: dockRightX }));
     } else {
       setIsDocked(null);
     }
@@ -220,12 +309,15 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
   const handlePipClick = (e: React.MouseEvent) => {
     if (isDocked) {
       e.stopPropagation();
-      const padding = 16;
-      const pipWidth = 110;
+      const pipWidth = typeof window !== 'undefined' && window.innerWidth <= 768 ? 100 : 120;
+      const padding = typeof window !== 'undefined' && window.innerWidth <= 768 ? 16 : 24;
       const minX = -(window.innerWidth - pipWidth - padding);
       if (isDocked === 'left') {
-        setPosition(prev => ({ ...prev, x: minX + 20 }));
+        const undockX = minX + 24;
+        currentPosRef.current.x = undockX;
+        setPosition(prev => ({ ...prev, x: undockX }));
       } else {
+        currentPosRef.current.x = 0;
         setPosition(prev => ({ ...prev, x: 0 }));
       }
       setIsDocked(null);
@@ -239,13 +331,17 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
     }
   }, [localStream, activeCall.status, isVideoMuted]);
 
+  const isRinging = activeCall.status === 'ringing';
+  const isConnected = activeCall.status === 'connected';
+  const isRemoteVideoActive = (!isPeerVideoMuted || isPeerScreenSharing) && (hasRemoteVideo || isPeerScreenSharing) && !!remoteStream;
+
   useEffect(() => {
-    if (remoteVideoElRef.current && remoteStream) {
+    if (remoteVideoElRef.current && remoteStream && isRemoteVideoActive) {
       remoteVideoElRef.current.srcObject = remoteStream;
       remoteVideoElRef.current.play().catch(() => {});
       applyAudioSink(isSpeakerphone);
     }
-  }, [remoteStream, activeCall.status, applyAudioSink, isSpeakerphone]);
+  }, [remoteStream, activeCall.status, applyAudioSink, isSpeakerphone, isRemoteVideoActive]);
 
   useEffect(() => {
     if (remoteAudioElRef.current && remoteStream) {
@@ -266,50 +362,118 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
     };
   }, [activeCall.status, activeCall.role]);
 
-  const isRinging = activeCall.status === 'ringing';
-  const isConnected = activeCall.status === 'connected';
-
   if (activeCall.type === 'VIDEO' && isConnected) {
     return (
-      <div className={styles.videoContainer}>
-        {/* Live Call Timer */}
-        <div className={styles.timerOverlay}>
+      <div 
+        className={styles.videoContainer}
+        onClick={handleUserActivity}
+        onMouseMove={handleUserActivity}
+        onTouchStart={handleUserActivity}
+      >
+        {/* Live Call Timer (Top Left) */}
+        <div className={`${styles.timerOverlay} ${!controlsVisible ? styles.timerHidden : ''}`}>
           <div className={styles.timerDot} />
           <span>{formatTime(callDuration)}</span>
         </div>
 
-        {/* Remote Video (Full Screen) */}
-        <video
-          ref={remoteVideoElRef}
+        {/* Mobile 3-Dot Settings Button (Top Right opposite timer) */}
+        {isMobile && (
+          <button
+            type="button"
+            className={`${styles.topSettingsBtn} ${!controlsVisible ? styles.topSettingsHidden : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowSettingsModal(true);
+            }}
+            title="Audio & Video Settings"
+          >
+            <MoreVertical size={20} />
+          </button>
+        )}
+
+        {/* Remote Video (Full Screen) OR Camera Off Avatar View */}
+        {isRemoteVideoActive ? (
+          <video
+            ref={remoteVideoElRef}
+            autoPlay
+            playsInline
+            className={styles.remoteVideo}
+          />
+        ) : (
+          <div 
+            className={styles.oneToOnePlaceholder} 
+            style={{ backgroundColor: getDiscordAdaptiveBg(activeCall.peerId || activeCall.peerName || 'peer') }}
+          >
+            <div className={styles.oneToOneAvatarWrapper}>
+              <img
+                src={activeCall.peerAvatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(activeCall.peerName || activeCall.peerId || 'peer')}`}
+                alt={activeCall.peerName || 'Peer'}
+                className={styles.oneToOnePlaceholderAvatar}
+              />
+              <div className={styles.oneToOneStatusPill}>
+                <VideoOff size={14} style={{ color: '#ef4444' }} />
+                <span>Camera Off</span>
+              </div>
+            </div>
+            <div className={styles.oneToOnePeerName}>
+              {activeCall.peerName || 'Peer User'}
+            </div>
+          </div>
+        )}
+
+        {/* Hidden Audio Tag for Remote Stream */}
+        <audio
+          ref={remoteAudioElRef}
           autoPlay
           playsInline
-          className={styles.remoteVideo}
+          style={{ display: 'none' }}
         />
 
         {/* Local Video (Floating Drag-and-Drop PIP) */}
-        {!isVideoMuted && (
-          <video
-            ref={localVideoElRef}
-            autoPlay
-            playsInline
-            muted
-            className={`${styles.localVideo} ${isDocked ? styles.localVideoDocked : ''}`}
-            style={{
-              transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
-            }}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onClick={handlePipClick}
-            title={isDocked ? 'Click to show preview' : undefined}
-          />
-        )}
+        <div
+          className={`${styles.localVideo} ${isDocked ? styles.localVideoDocked : ''} ${isDocked === 'left' ? styles.localVideoDockedLeft : ''} ${isDocked === 'right' ? styles.localVideoDockedRight : ''}`}
+          style={{
+            transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
+          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onClick={handlePipClick}
+          title={isDocked ? 'Click to show preview' : undefined}
+        >
+          {!isVideoMuted ? (
+            <video
+              ref={localVideoElRef}
+              autoPlay
+              playsInline
+              muted
+              style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
+            />
+          ) : (
+            <div 
+              className={styles.localPipPlaceholder}
+              style={{ backgroundColor: getDiscordAdaptiveBg(currentUser?.id || currentUser?.name || 'me') }}
+            >
+              <img
+                src={currentUser?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(currentUser?.name || currentUser?.id || 'me')}`}
+                alt="You"
+                className={styles.localPipAvatar}
+              />
+              <div className={styles.localPipMutedBadge}>
+                <VideoOff size={12} color="#ef4444" />
+              </div>
+            </div>
+          )}
+        </div>
 
-        {/* Call controls overlay */}
-        <div className={styles.videoControls}>
+        {/* Call controls overlay (Bottom Dock) */}
+        <div className={`${styles.videoControls} ${!controlsVisible ? styles.controlsHidden : ''}`}>
           <button
             className={isMuted ? styles.videoBtnMuted : styles.videoBtn}
-            onClick={onToggleMute}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleMute();
+            }}
             title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
           >
             {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
@@ -317,39 +481,59 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
 
           <button
             className={isVideoMuted ? styles.videoBtnMuted : styles.videoBtn}
-            onClick={onToggleVideo}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleVideo();
+            }}
             title={isVideoMuted ? 'Turn Camera On' : 'Turn Camera Off'}
           >
             {isVideoMuted ? <VideoOff size={20} /> : <VideoOn size={20} />}
           </button>
 
+          {/* Screen Share button (supported on both mobile & desktop) */}
+          <button
+            className={isScreenSharing ? styles.videoBtnActive : styles.videoBtn}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleScreenShare();
+            }}
+            title={isScreenSharing ? 'Stop Screen Share' : 'Share Screen'}
+          >
+            <Monitor size={20} />
+          </button>
+
           {isMobile ? (
             <button
               className={isSpeakerphone ? styles.videoBtnActive : styles.videoBtn}
-              onClick={handleToggleSpeakerphone}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleToggleSpeakerphone();
+              }}
               title={isSpeakerphone ? 'Speakerphone (Loudspeaker)' : 'Earpiece'}
             >
               {isSpeakerphone ? <Volume2 size={20} /> : <Smartphone size={20} />}
             </button>
           ) : (
             <button
-              className={isScreenSharing ? styles.videoBtnActive : styles.videoBtn}
-              onClick={onToggleScreenShare}
-              title={isScreenSharing ? 'Stop Screen Share' : 'Share Screen'}
+              className={showSettingsModal ? styles.videoBtnActive : styles.videoBtn}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSettingsModal(!showSettingsModal);
+              }}
+              title="Audio & Video Settings"
             >
-              <Monitor size={20} />
+              <Settings size={20} />
             </button>
           )}
 
-          <button
-            className={showSettingsModal ? styles.videoBtnActive : styles.videoBtn}
-            onClick={() => setShowSettingsModal(!showSettingsModal)}
-            title="Audio & Video Settings"
+          <button 
+            className={styles.videoBtnEnd} 
+            onClick={(e) => {
+              e.stopPropagation();
+              onEnd();
+            }} 
+            title="End Call"
           >
-            <Settings size={20} />
-          </button>
-
-          <button className={styles.videoBtnEnd} onClick={onEnd} title="End Call">
             <PhoneOff size={20} />
           </button>
         </div>
@@ -357,6 +541,8 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
         <DeviceSettingsModal
           isOpen={showSettingsModal}
           onClose={() => setShowSettingsModal(false)}
+          isScreenSharing={isScreenSharing}
+          onToggleScreenShare={onToggleScreenShare}
         />
       </div>
     );
@@ -383,7 +569,7 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
         )}
 
         <img
-          src={activeCall.peerAvatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${activeCall.peerName || 'peer'}`}
+          src={activeCall.peerAvatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(activeCall.peerName || activeCall.peerId || 'peer')}`}
           alt="Peer avatar"
           className={isRinging ? styles.ringingAvatar : styles.avatar}
         />

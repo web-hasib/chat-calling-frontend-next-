@@ -107,20 +107,41 @@
   position: absolute;
   bottom: 24px;
   right: 24px;
-  width: 150px;
-  height: 220px;
-  border-radius: var(--radius-md);
+  width: 120px;
+  height: 180px;
+  border-radius: 16px;
   object-fit: cover;
-  border: 2px solid white;
-  box-shadow: var(--shadow-lg);
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   background: #111;
-  z-index: 10;
+  z-index: 50;
   touch-action: none;
   cursor: grab;
+  transition: border-radius 0.25s ease, box-shadow 0.25s ease, opacity 0.25s ease;
 }
 
 .localVideo:active {
   cursor: grabbing;
+}
+
+.localVideoDocked {
+  opacity: 0.88 !important;
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.6) !important;
+  cursor: pointer !important;
+}
+
+.localVideoDockedLeft {
+  border-left: none !important;
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-color: rgba(99, 102, 241, 0.8) !important;
+}
+
+.localVideoDockedRight {
+  border-right: none !important;
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-color: rgba(99, 102, 241, 0.8) !important;
 }
 
 .videoControls {
@@ -139,6 +160,13 @@
   padding: 12px 24px;
   border-radius: var(--radius-full);
   z-index: 100;
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.controlsHidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateX(-50%) translateY(80px) !important;
 }
 
 .videoBtn {
@@ -214,6 +242,45 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.timerHidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(-40px) !important;
+}
+
+.topSettingsBtn {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  background: rgba(255, 255, 255, 0.08) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.2) !important;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  color: rgba(255, 255, 255, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 50;
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.topSettingsBtn:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+  transform: scale(1.05);
+}
+
+.topSettingsHidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(-40px) !important;
 }
 
 .timerDot {
@@ -222,6 +289,96 @@
   border-radius: 50%;
   background-color: var(--accent-danger);
   animation: pulse-ring 1s infinite;
+}
+
+/* ─── 1:1 Camera Off Placeholder Display ─── */
+.oneToOnePlaceholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background-color: #1a1d26;
+  position: relative;
+  overflow: hidden;
+}
+
+.oneToOneAvatarWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.oneToOnePlaceholderAvatar {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 4px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  animation: pulse-ring 3s infinite;
+}
+
+.oneToOneStatusPill {
+  position: absolute;
+  bottom: -4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(15, 17, 23, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.oneToOnePeerName {
+  font-size: 20px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+  letter-spacing: 0.3px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.localPipPlaceholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 24, 34, 0.95);
+  border-radius: inherit;
+  position: relative;
+}
+
+.localPipAvatar {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.localPipMutedBadge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 /* ═══════════════════════════════════════════════════════════ */
