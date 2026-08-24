@@ -31,6 +31,7 @@ interface ParticipantsModalProps {
   onAdminMuteUser: (userId: string) => void;
   onAdminUnmuteUser: (userId: string) => void;
   onAdminMuteAll: () => void;
+  onToggleMyMute?: () => void;
 }
 
 export const ParticipantsModal: React.FC<ParticipantsModalProps> = ({
@@ -53,6 +54,7 @@ export const ParticipantsModal: React.FC<ParticipantsModalProps> = ({
   onAdminMuteUser,
   onAdminUnmuteUser,
   onAdminMuteAll,
+  onToggleMyMute,
 }) => {
   if (!isOpen) return null;
 
@@ -72,19 +74,13 @@ export const ParticipantsModal: React.FC<ParticipantsModalProps> = ({
         </div>
 
         <div className={styles.participantsList}>
-          {/* Self Row */}
-          <div
-            className={`${styles.participantRow} ${styles.participantRowClickable}`}
-            onClick={() => {
-              onFocusUser(null);
-              onClose();
-            }}
-          >
+          {/* Local User Row (Always First) */}
+          <div className={styles.participantRow}>
             <div className={styles.participantInfo}>
               <div style={{ position: 'relative' }}>
                 <img
-                  src={myUser?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${myUser?.name || myUser?.id || 'me'}`}
-                  alt="You"
+                  src={myUser?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${myUser?.name || 'You'}`}
+                  alt={myUser?.name || 'You'}
                   className={styles.participantAvatar}
                 />
                 <span className={styles.liveIndicator} title="Live">●</span>
@@ -112,14 +108,27 @@ export const ParticipantsModal: React.FC<ParticipantsModalProps> = ({
               </div>
             </div>
             <div className={styles.participantControls}>
-              {isGroupMuted ? (
-                <span className={styles.muteIndicator} title="Muted">
-                  <MicOff size={15} />
-                </span>
+              {onToggleMyMute ? (
+                <button
+                  className={`${styles.adminMuteUserBtn} ${isGroupMuted ? styles.mutedUserBtn : styles.activeUserBtn}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleMyMute();
+                  }}
+                  title={isGroupMuted ? 'Click to Unmute Yourself' : 'Click to Mute Yourself'}
+                >
+                  {isGroupMuted ? <MicOff size={15} /> : <Mic size={15} />}
+                </button>
               ) : (
-                <span className={styles.activeIndicator} title="Speaking">
-                  <Mic size={15} />
-                </span>
+                isGroupMuted ? (
+                  <span className={styles.muteIndicator} title="Muted">
+                    <MicOff size={15} />
+                  </span>
+                ) : (
+                  <span className={styles.activeIndicator} title="Speaking">
+                    <Mic size={15} />
+                  </span>
+                )
               )}
             </div>
           </div>
@@ -127,7 +136,6 @@ export const ParticipantsModal: React.FC<ParticipantsModalProps> = ({
           {/* Remote Rows */}
           {sortedParticipants.map((p) => {
             const isMuted = groupMutedUserIds.has(p.userId);
-            const hasStream = groupRemoteStreams.has(p.userId);
             const isSharingScreen = groupCallScreenSharingStates[p.userId] || false;
             const pHandRaised = groupCallHandRaisedStates[p.userId] || false;
             const pFootRaised = groupCallFootRaisedStates[p.userId] || false;
@@ -148,7 +156,7 @@ export const ParticipantsModal: React.FC<ParticipantsModalProps> = ({
                       alt={p.name}
                       className={styles.participantAvatar}
                     />
-                    {hasStream && <span className={styles.liveIndicator} title="Live">●</span>}
+                    <span className={styles.liveIndicator} title="Live">●</span>
                   </div>
                   <div className={styles.participantMeta}>
                     <span className={styles.participantName}>
@@ -173,37 +181,31 @@ export const ParticipantsModal: React.FC<ParticipantsModalProps> = ({
                   </div>
                 </div>
                 <div className={styles.participantControls}>
-                  {!hasStream ? (
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Connecting...</span>
+                  {isAdmin ? (
+                    <button
+                      className={`${styles.adminMuteUserBtn} ${isMuted ? styles.mutedUserBtn : styles.activeUserBtn}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isMuted) {
+                          onAdminUnmuteUser(p.userId);
+                        } else {
+                          onAdminMuteUser(p.userId);
+                        }
+                      }}
+                      title={isMuted ? 'Click to Unmute User' : 'Click to Mute User'}
+                    >
+                      {isMuted ? <MicOff size={15} /> : <Mic size={15} />}
+                    </button>
                   ) : (
-                    <>
-                      {isAdmin ? (
-                        <button
-                          className={`${styles.adminMuteUserBtn} ${isMuted ? styles.mutedUserBtn : styles.activeUserBtn}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (isMuted) {
-                              onAdminUnmuteUser(p.userId);
-                            } else {
-                              onAdminMuteUser(p.userId);
-                            }
-                          }}
-                          title={isMuted ? 'Click to Unmute User' : 'Click to Mute User'}
-                        >
-                          {isMuted ? <MicOff size={15} /> : <Mic size={15} />}
-                        </button>
-                      ) : (
-                        isMuted ? (
-                          <span className={styles.muteIndicator} title="Muted">
-                            <MicOff size={15} />
-                          </span>
-                        ) : (
-                          <span className={styles.activeIndicator} title="Active">
-                            <Mic size={15} />
-                          </span>
-                        )
-                      )}
-                    </>
+                    isMuted ? (
+                      <span className={styles.muteIndicator} title="Muted">
+                        <MicOff size={15} />
+                      </span>
+                    ) : (
+                      <span className={styles.activeIndicator} title="Active">
+                        <Mic size={15} />
+                      </span>
+                    )
                   )}
                 </div>
               </div>

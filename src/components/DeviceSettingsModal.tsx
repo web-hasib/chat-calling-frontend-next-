@@ -175,8 +175,8 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
 
         {/* Additional Call Actions */}
         {(onToggleFullscreen || onToggleFootRaise || onAdminMuteAll) && (
-          <div style={{ marginTop: '22px', paddingTop: '18px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <span style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
+          <div style={{ marginTop: '22px', paddingTop: '18px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
               More Controls
             </span>
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -189,14 +189,17 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
                     alignItems: 'center',
                     gap: '8px',
                     padding: '10px 16px',
-                    borderRadius: '12px',
-                    background: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    borderRadius: '14px',
+                    background: 'rgba(255,255,255,0.07)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    border: '1px solid rgba(255,255,255,0.14)',
                     color: '#f8fafc',
                     fontSize: '13px',
                     fontWeight: 500,
                     cursor: 'pointer',
                     transition: 'all 0.15s ease',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                   }}
                 >
                   {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen Mode'}
@@ -212,14 +215,17 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
                     alignItems: 'center',
                     gap: '8px',
                     padding: '10px 16px',
-                    borderRadius: '12px',
-                    background: isFootRaised ? 'rgba(168, 85, 247, 0.2)' : 'rgba(255,255,255,0.06)',
-                    border: isFootRaised ? '1px solid rgba(168, 85, 247, 0.5)' : '1px solid rgba(255,255,255,0.12)',
+                    borderRadius: '14px',
+                    background: isFootRaised ? 'rgba(168, 85, 247, 0.25)' : 'rgba(255,255,255,0.07)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    border: isFootRaised ? '1px solid rgba(168, 85, 247, 0.5)' : '1px solid rgba(255,255,255,0.14)',
                     color: isFootRaised ? '#e9d5ff' : '#f8fafc',
                     fontSize: '13px',
                     fontWeight: 500,
                     cursor: 'pointer',
                     transition: 'all 0.15s ease',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                   }}
                 >
                   <span style={{ fontSize: '15px' }}>🦶</span> {isFootRaised ? 'Lower Foot' : 'Raise Foot'}
@@ -235,14 +241,17 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
                     alignItems: 'center',
                     gap: '8px',
                     padding: '10px 16px',
-                    borderRadius: '12px',
-                    background: 'rgba(239, 68, 68, 0.12)',
-                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: '14px',
+                    background: 'rgba(239, 68, 68, 0.16)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    border: '1px solid rgba(239, 68, 68, 0.35)',
                     color: '#fca5a5',
                     fontSize: '13px',
                     fontWeight: 600,
                     cursor: 'pointer',
                     transition: 'all 0.15s ease',
+                    boxShadow: '0 4px 12px rgba(239, 68, 68, 0.2)',
                   }}
                 >
                   <Mic size={15} /> Mute Everyone

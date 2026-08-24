@@ -204,13 +204,24 @@ export function ChatDetails({
   };
 
   return (
-    <div className="w-[300px] border-l border-[var(--border-color)] bg-[var(--bg-secondary)] flex flex-col h-full overflow-y-auto z-40 fixed inset-y-0 right-0 md:relative md:inset-auto md:w-[300px] shrink-0">
-      <div className="p-4 md:px-5 border-b border-[var(--border-color)] flex items-center justify-between h-[72px] shrink-0">
-        <h3 className="text-sm font-semibold text-[var(--text-primary)]">Chat Details</h3>
-        <button className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer w-9 h-9 rounded-full flex items-center justify-center hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors" onClick={onClose}>
-          <X size={18} />
-        </button>
-      </div>
+    <>
+      {/* Mobile backdrop overlay - clicking outside closes details drawer */}
+      <div
+        className="fixed inset-0 bg-black/60 backdrop-blur-[2px] z-40 md:hidden animate-in fade-in duration-200"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      <div
+        className="w-[320px] max-w-[85vw] border-l border-[var(--border-color)] bg-[var(--bg-secondary)] flex flex-col h-full overflow-y-auto z-50 fixed inset-y-0 right-0 md:relative md:inset-auto md:w-[300px] shrink-0 shadow-2xl md:shadow-none animate-in slide-in-from-right duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 md:px-5 border-b border-[var(--border-color)] flex items-center justify-between h-[72px] shrink-0">
+          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Chat Details</h3>
+          <button className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer w-9 h-9 rounded-full flex items-center justify-center hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
 
       <div className="p-[18px] flex flex-col gap-5 flex-1">
         {/* Profile Card */}
@@ -627,8 +638,14 @@ export function ChatDetails({
 
       {/* Add Member Modal */}
       {showAddMemberModal && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-[2px]">
-          <div className="w-[360px] bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-6 flex flex-col gap-4 shadow-2xl relative text-[var(--text-primary)]">
+        <div
+          className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-[2px] animate-in fade-in duration-200"
+          onClick={() => setShowAddMemberModal(false)}
+        >
+          <div
+            className="w-[360px] bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-6 flex flex-col gap-4 shadow-2xl relative text-[var(--text-primary)] animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button className="absolute top-4 right-4 text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer" onClick={() => setShowAddMemberModal(false)}>
               <X size={18} />
             </button>
@@ -665,8 +682,14 @@ export function ChatDetails({
 
       {/* ── Custom Confirmation Modal ── */}
       {confirmModal.show && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-[2px] animate-in fade-in duration-200">
-          <div className="w-[320px] bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-5 flex flex-col gap-4 shadow-2xl relative text-[var(--text-primary)] animate-in zoom-in-95 ease-out duration-200">
+        <div
+          className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-[2px] animate-in fade-in duration-200"
+          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+        >
+          <div
+            className="w-[320px] bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-5 flex flex-col gap-4 shadow-2xl relative text-[var(--text-primary)] animate-in zoom-in-95 ease-out duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="text-sm font-bold text-red-500">{confirmModal.title}</h3>
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
               {confirmModal.message}
@@ -692,5 +715,6 @@ export function ChatDetails({
         </div>
       )}
     </div>
+  </>
   );
 }

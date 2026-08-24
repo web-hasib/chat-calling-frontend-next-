@@ -106,8 +106,17 @@ export function CameraCaptureModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[10000] bg-black/75 backdrop-blur-md flex flex-col items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl overflow-hidden shadow-2xl flex flex-col">
+    <div
+      className="fixed inset-0 z-[10000] bg-black/75 backdrop-blur-md flex flex-col items-center justify-center p-4 animate-in fade-in duration-200"
+      onClick={() => {
+        if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+        onClose();
+      }}
+    >
+      <div
+        className="relative w-full max-w-2xl bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border-color)] bg-[var(--bg-primary)]">
           <div className="flex items-center gap-2 font-semibold text-[var(--text-primary)] text-base">

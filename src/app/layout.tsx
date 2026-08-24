@@ -4,6 +4,7 @@ import { AuthProvider } from '../context/AuthContext';
 import { SocketProvider } from '../context/SocketContext';
 import { CallProvider } from '../context/CallContext';
 import CallOverlay from '../components/CallOverlay';
+import { ServiceWorkerRegister } from '../components/ServiceWorkerRegister';
 import { Geist } from "next/font/google";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +45,7 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body>
+        <ServiceWorkerRegister />
         <AuthProvider>
           <SocketProvider>
             <CallProvider>

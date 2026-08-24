@@ -5,6 +5,7 @@ import EmojiPicker, { Theme } from 'emoji-picker-react';
 import {
   Smile, Reply, Trash2, X, ExternalLink, Check, CheckCheck, Loader2, Plus, Mail, Copy,
 } from 'lucide-react';
+import { formatMessageSnippet } from '../../../utils/formatSnippet';
 
 interface MessageItemProps {
   msg: any;
@@ -266,7 +267,7 @@ export function MessageItem({
               Replying to {msg.replyTo.sender?.name || 'Message'}
             </div>
             <div className="text-[var(--text-secondary)] truncate">
-              {msg.replyTo.content || (msg.replyTo.fileUrl ? 'Attachment File' : '')}
+              {formatMessageSnippet(msg.replyTo) || (msg.replyTo.fileUrl ? 'Attachment File' : '')}
             </div>
           </div>
         )}

@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { ChevronLeft, ChevronRight, MessageSquare, Users, Settings, Sun, Moon, LogOut, Plus, Link2, X, GroupIcon } from 'lucide-react';
 import { useChatContext } from '../../../context/ChatContext';
@@ -5,6 +7,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { CreateGroupModal } from './CreateGroupModal';
 import { JoinGroupModal } from './JoinGroupModal';
 import { SettingsPage } from './SettingsPage';
+import { formatMessageSnippet } from '../../../utils/formatSnippet';
 
 interface SidebarProps {
   user: any;
@@ -350,7 +353,7 @@ export function Sidebar({
                               : convo.isGroup
                               ? `${convo.messages[0].sender?.name || 'User'}: `
                               : ''
-                          }${convo.messages[0].content || 'Sent a file'}`
+                          }${formatMessageSnippet(convo.messages[0])}`
                         : 'No messages yet'}
                     </div>
                   </div>

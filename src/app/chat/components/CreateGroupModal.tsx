@@ -22,8 +22,14 @@ export function CreateGroupModal({ users, onClose, onSuccess }: CreateGroupModal
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
 
   return (
-    <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-      <div className="w-full max-w-[420px] bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl p-6 flex flex-col gap-4 shadow-2xl relative text-[var(--text-primary)] animate-in zoom-in-95 duration-150">
+    <div
+      className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-[420px] bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl p-6 flex flex-col gap-4 shadow-2xl relative text-[var(--text-primary)] animate-in zoom-in-95 duration-150"
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
           className="absolute top-4 right-4 text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer p-1 rounded-full hover:bg-[var(--bg-tertiary)] transition-colors border-none bg-transparent"
           onClick={onClose}

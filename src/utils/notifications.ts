@@ -19,6 +19,21 @@ export const CALL_TONES: { id: CallTonePreset; name: string; desc: string }[] = 
   { id: 'soft', name: 'Zen Soft Chime', desc: 'Calm and relaxing harmonic melody' },
 ];
 
+export function registerServiceWorker() {
+  if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker
+        .register('/sw.js')
+        .then((reg) => {
+          console.log('[SW] Service Worker registered successfully with scope:', reg.scope);
+        })
+        .catch((err) => {
+          console.warn('[SW] Service Worker registration failed:', err);
+        });
+    });
+  }
+}
+
 export async function requestNotificationPermission(): Promise<boolean> {
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return false;
@@ -40,13 +55,36 @@ export function getNotificationPermissionStatus(): NotificationPermission | 'uns
   return Notification.permission;
 }
 
-export function showPushNotification(title: string, options?: NotificationOptions) {
+export async function showPushNotification(title: string, options?: NotificationOptions & { isCall?: boolean; conversationId?: string; callType?: string }) {
   if (typeof window === 'undefined' || !('Notification' in window)) return;
   const enabled = localStorage.getItem('push_notifications_enabled') !== 'false';
   if (!enabled) return;
 
   if (Notification.permission === 'granted') {
     try {
+      // Prefer ServiceWorkerRegistration for rich notifications with action buttons
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready.catch(() => null);
+        if (reg && 'showNotification' in reg) {
+          const swOptions: any = {
+            icon: '/favicon.ico',
+            badge: '/favicon.ico',
+            vibrate: options?.isCall ? [500, 250, 500, 250, 500, 250, 1000] : [200, 100, 200],
+            requireInteraction: options?.isCall ? true : false,
+            actions: options?.isCall
+              ? [
+                  { action: 'accept', title: '📞 Answer' },
+                  { action: 'decline', title: '❌ Decline' },
+                ]
+              : undefined,
+            ...options,
+          };
+          await reg.showNotification(title, swOptions);
+          return;
+        }
+      }
+
+      // Fallback to standard Window Notification
       const notif = new Notification(title, {
         icon: '/favicon.ico',
         badge: '/favicon.ico',
@@ -160,9 +198,30 @@ export function playMessageNotificationSound(customPreset?: MessageTonePreset) {
   }
 }
 
-// ── Synthesized Call Ringtone Player / Previewer ──
+// ── Synthesized Call Ringtone & Haptic Vibration ──
 let activeCallRingInterval: any = null;
 let activeCallRingCtx: AudioContext | null = null;
+let activeVibrationInterval: any = null;
+
+export function triggerPhoneVibration(pattern: number[] = [1000, 500, 1000, 500]) {
+  if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+    try {
+      navigator.vibrate(pattern);
+    } catch {}
+  }
+}
+
+export function stopPhoneVibration() {
+  if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+    try {
+      navigator.vibrate(0);
+    } catch {}
+  }
+  if (activeVibrationInterval) {
+    clearInterval(activeVibrationInterval);
+    activeVibrationInterval = null;
+  }
+}
 
 export function playCallRingtone(customPreset?: CallTonePreset) {
   if (typeof window === 'undefined') return;
@@ -258,10 +317,18 @@ export function playCallRingtone(customPreset?: CallTonePreset) {
 
 export function startIncomingCallRingtoneLoop() {
   stopIncomingCallRingtoneLoop();
+  
+  // Start Audio Ringtone
   playCallRingtone();
   activeCallRingInterval = setInterval(() => {
     playCallRingtone();
   }, 2200);
+
+  // Start Rhythmic Vibration for Mobile
+  triggerPhoneVibration([1000, 500, 1000, 500]);
+  activeVibrationInterval = setInterval(() => {
+    triggerPhoneVibration([1000, 500, 1000, 500]);
+  }, 3000);
 }
 
 export function stopIncomingCallRingtoneLoop() {
@@ -273,4 +340,6 @@ export function stopIncomingCallRingtoneLoop() {
     try { activeCallRingCtx.close(); } catch {}
     activeCallRingCtx = null;
   }
+  stopPhoneVibration();
 }
+

@@ -5,6 +5,7 @@ import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { Smile, Paperclip, Send, X, Image as ImageIcon, Camera, Mail } from 'lucide-react';
 import { CameraCaptureModal } from './CameraCaptureModal';
 import { RichEmailModal } from './RichEmailModal';
+import { formatMessageSnippet } from '../../../utils/formatSnippet';
 
 interface MessageInputProps {
   inputText: string;
@@ -228,7 +229,7 @@ export function MessageInput({
               Replying to {replyingTo.sender?.name || 'Message'}
             </span>
             <span className="text-[var(--text-secondary)] truncate">
-              {replyingTo.content || (replyingTo.fileUrl ? 'Attachment File' : '')}
+              {formatMessageSnippet(replyingTo) || (replyingTo.fileUrl ? 'Attachment File' : '')}
             </span>
           </div>
           <button className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer p-0.5" onClick={onCancelReply}>
