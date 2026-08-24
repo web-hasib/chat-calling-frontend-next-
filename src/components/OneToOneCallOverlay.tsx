@@ -11,11 +11,12 @@ import { useAuth } from '../context/AuthContext';
 interface OneToOneCallOverlayProps {
   activeCall: {
     type: 'AUDIO' | 'VIDEO';
-    status: 'idle' | 'ringing' | 'connecting' | 'connected' | 'busy' | 'declined' | 'ended';
+    status: 'idle' | 'ringing' | 'connecting' | 'connected' | 'busy' | 'declined' | 'ended' | 'offline' | 'failed';
     role: 'caller' | 'receiver';
     peerId?: string;
     peerName?: string;
     peerAvatar?: string;
+    failureReason?: string;
   };
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
@@ -402,7 +403,7 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
         ) : (
           <div 
             className={styles.oneToOnePlaceholder} 
-            style={{ backgroundColor: getDiscordAdaptiveBg(activeCall.peerId || activeCall.peerName || 'peer') }}
+            style={{ background: getDiscordAdaptiveBg(activeCall.peerId || activeCall.peerName || 'peer') }}
           >
             <div className={styles.oneToOneAvatarWrapper}>
               <img
@@ -549,7 +550,12 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
   }
 
   return (
-    <div className={styles.overlay}>
+    <div 
+      className={styles.overlay}
+      style={{
+        background: getDiscordAdaptiveBg(activeCall.peerId || activeCall.peerName || 'peer'),
+      }}
+    >
       {/* Optional Proximity Ear Screen Guard when near ear */}
       {isNearEar && isConnected && (
         <div className={styles.proximityScreenLock} onClick={() => setIsNearEar(false)}>
@@ -560,56 +566,66 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
       )}
 
       <div className={styles.panel}>
-        {/* Live Call Timer (audio connected) */}
-        {isConnected && activeCall.type === 'AUDIO' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', background: 'rgba(255,255,255,0.05)', padding: '4px 12px', borderRadius: '12px', color: 'var(--text-secondary)', marginBottom: '-10px' }}>
-            <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--accent-success)' }} />
-            <span>{formatTime(callDuration)}</span>
-          </div>
-        )}
+        {/* Top Header Section */}
+        <div className={styles.callingTopSection}>
+          {isConnected && activeCall.type === 'AUDIO' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', padding: '6px 16px', borderRadius: '20px', color: 'rgba(255,255,255,0.95)', fontWeight: 500 }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--accent-success)' }} />
+              <span>{formatTime(callDuration)}</span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', padding: '6px 14px', borderRadius: '20px', color: 'rgba(255,255,255,0.85)', letterSpacing: '0.4px', fontWeight: 600 }}>
+              {activeCall.type === 'VIDEO' ? <VideoOn size={14} /> : <Phone size={14} />}
+              <span>{activeCall.type === 'VIDEO' ? '1:1 Video Call' : '1:1 Audio Call'}</span>
+            </div>
+          )}
+        </div>
 
-        <img
-          src={activeCall.peerAvatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(activeCall.peerName || activeCall.peerId || 'peer')}`}
-          alt="Peer avatar"
-          className={isRinging ? styles.ringingAvatar : styles.avatar}
-        />
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-          <h2 className={styles.name}>{activeCall.peerName || 'Peer User'}</h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
-            {activeCall.type === 'VIDEO' ? (
-              <VideoOn size={16} style={{ color: 'var(--accent-primary, #3b82f6)' }} />
-            ) : (
-              <Phone size={14} style={{ color: 'var(--accent-success, #22c55e)' }} />
-            )}
-            <span
-              className={styles.status}
-              style={{
-                margin: 0,
-                fontSize: '13px',
-                color: activeCall.status === 'busy' || activeCall.status === 'declined' || activeCall.status === 'ended'
-                  ? '#ef4444'
-                  : undefined,
-              }}
-            >
-              {activeCall.status === 'ringing'
-                ? activeCall.role === 'caller'
-                  ? `${activeCall.type === 'VIDEO' ? 'Video' : 'Audio'} Call Ringing...`
-                  : `Incoming ${activeCall.type === 'VIDEO' ? 'Video' : 'Audio'} Call...`
-                : activeCall.status === 'connecting'
-                ? 'Connecting...'
-                : activeCall.status === 'busy'
-                ? 'User is busy on another call'
-                : activeCall.status === 'declined'
-                ? 'Call declined'
-                : activeCall.status === 'ended'
-                ? 'Call ended'
-                : `Connected (${activeCall.type === 'VIDEO' ? 'Video' : 'Audio'} Call)`}
-            </span>
+        {/* Center Hero: Avatar, Name, Status */}
+        <div className={styles.callingCenterHero}>
+          <img
+            src={activeCall.peerAvatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(activeCall.peerName || activeCall.peerId || 'peer')}`}
+            alt="Peer avatar"
+            className={isRinging ? styles.ringingAvatar : styles.avatar}
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+            <h2 className={styles.name}>{activeCall.peerName || 'Peer User'}</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
+              <span
+                className={styles.status}
+                style={{
+                  margin: 0,
+                  fontSize: '15px',
+                  color: activeCall.status === 'busy' || activeCall.status === 'declined' || activeCall.status === 'ended' || activeCall.status === 'offline' || activeCall.status === 'failed'
+                    ? '#ef4444'
+                    : 'rgba(255,255,255,0.85)',
+                }}
+              >
+                {activeCall.status === 'offline'
+                  ? 'User is currently offline'
+                  : activeCall.status === 'failed'
+                  ? (activeCall.failureReason || 'Call failed')
+                  : activeCall.status === 'ringing'
+                  ? activeCall.role === 'caller'
+                    ? `${activeCall.type === 'VIDEO' ? 'Video' : 'Audio'} Call Ringing...`
+                    : `Incoming ${activeCall.type === 'VIDEO' ? 'Video' : 'Audio'} Call...`
+                  : activeCall.status === 'connecting'
+                  ? 'Connecting...'
+                  : activeCall.status === 'busy'
+                  ? 'User is busy on another call'
+                  : activeCall.status === 'declined'
+                  ? 'Call declined'
+                  : activeCall.status === 'ended'
+                  ? 'Call ended'
+                  : `Connected (${activeCall.type === 'VIDEO' ? 'Video' : 'Audio'} Call)`}
+              </span>
+            </div>
           </div>
         </div>
 
+        {/* Bottom Controls */}
         <div className={styles.controls}>
-          {activeCall.status === 'busy' || activeCall.status === 'declined' || activeCall.status === 'ended' ? null : (
+          {activeCall.status === 'busy' || activeCall.status === 'declined' || activeCall.status === 'ended' || activeCall.status === 'offline' || activeCall.status === 'failed' ? null : (
             isRinging && activeCall.role === 'receiver' ? (
               <>
                 <button
@@ -617,50 +633,48 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
                   onClick={onAccept}
                   title="Answer Call"
                 >
-                  <Phone size={24} />
+                  <Phone size={28} />
                 </button>
                 <button
                   className={`${styles.btn} ${styles.btnDecline}`}
                   onClick={onReject}
                   title="Decline Call"
                 >
-                  <PhoneOff size={24} />
+                  <PhoneOff size={28} />
                 </button>
               </>
             ) : (
-              <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
                 {isConnected && activeCall.type === 'AUDIO' && (
                   <>
                     <button
-                      className={`${styles.btn} ${isMuted ? styles.btnDecline : styles.btn}`}
-                      style={{ background: isMuted ? undefined : 'rgba(255,255,255,0.1)', color: isMuted ? 'white' : 'var(--text-primary)' }}
+                      className={`${styles.btn}`}
+                      style={{ 
+                        background: isMuted ? '#ef4444' : 'rgba(255,255,255,0.12)', 
+                        color: 'white',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        backdropFilter: 'blur(10px)'
+                      }}
                       onClick={onToggleMute}
                       title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
                     >
-                      {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
+                      {isMuted ? <MicOff size={26} /> : <Mic size={26} />}
                     </button>
 
                     {/* Mobile Speakerphone Toggle */}
                     {isMobile && (
                       <button
-                        className={isSpeakerphone ? styles.speakerBtnActive : styles.speakerBtn}
+                        className={`${styles.btn}`}
+                        style={{ 
+                          background: isSpeakerphone ? 'rgba(99,102,241,0.35)' : 'rgba(255,255,255,0.12)', 
+                          color: 'white',
+                          border: isSpeakerphone ? '1px solid rgba(99,102,241,0.6)' : '1px solid rgba(255,255,255,0.15)',
+                          backdropFilter: 'blur(10px)'
+                        }}
                         onClick={handleToggleSpeakerphone}
                         title={isSpeakerphone ? 'Speakerphone On' : 'Earpiece Mode'}
                       >
-                        {isSpeakerphone ? <Volume2 size={22} /> : <Smartphone size={22} />}
-                        <span>{isSpeakerphone ? 'Speaker' : 'Earpiece'}</span>
-                      </button>
-                    )}
-
-                    {/* Ear protect mode toggle for mobile */}
-                    {isMobile && (
-                      <button
-                        className={styles.speakerBtn}
-                        onClick={() => setIsNearEar(true)}
-                        title="Lock screen while holding near ear"
-                      >
-                        <Shield size={20} />
-                        <span>Ear Lock</span>
+                        {isSpeakerphone ? <Volume2 size={26} /> : <Smartphone size={26} />}
                       </button>
                     )}
                   </>
@@ -671,7 +685,7 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
                   onClick={activeCall.role === 'caller' && isRinging ? onReject : onEnd}
                   title="End Call"
                 >
-                  <PhoneOff size={24} />
+                  <PhoneOff size={28} />
                 </button>
               </div>
             )

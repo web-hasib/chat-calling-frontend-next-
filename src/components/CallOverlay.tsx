@@ -23,23 +23,46 @@ interface FloatingEmoji {
   rotate: number;
 }
 
-export const getDiscordAdaptiveBg = (userId: string) => {
-  const colors = [
-    '#3c2f2f', // Dark reddish brown
-    '#2f3c37', // Dark sage green
-    '#372f3c', // Dark dusty purple
-    '#2f363c', // Dark slate blue
-    '#3c372f', // Dark olive/bronze
-    '#403030', // Dark warm brown
-    '#304038', // Dark teal-green
-    '#3a3d52', // Dark indigo-grey
+export const getDiscordAdaptiveBg = (id: string, isMesh: boolean = true) => {
+  const themes = [
+    // 1. Royal Indigo / Violet
+    { primary: '#6366f1', secondary: '#8b5cf6', dark: '#0e1027', solid: '#282b4a' },
+    // 2. Deep Emerald / Teal
+    { primary: '#10b981', secondary: '#06b6d4', dark: '#071c17', solid: '#1b3b33' },
+    // 3. Electric Crimson / Rose
+    { primary: '#f43f5e', secondary: '#ec4899', dark: '#240a15', solid: '#4a1e2f' },
+    // 4. Sapphire Blue / Cyan
+    { primary: '#3b82f6', secondary: '#0ea5e9', dark: '#0b162c', solid: '#1c2e4f' },
+    // 5. Sunset Amber / Coral
+    { primary: '#f59e0b', secondary: '#f97316', dark: '#261406', solid: '#4f301b' },
+    // 6. Cyber Purple / Fuchsia
+    { primary: '#a855f7', secondary: '#d946ef', dark: '#1f0b2f', solid: '#422057' },
+    // 7. Dark Forest / Jade
+    { primary: '#22c55e', secondary: '#14b8a6', dark: '#092113', solid: '#1c3d28' },
+    // 8. Ruby Wine / Burgundy
+    { primary: '#e11d48', secondary: '#9f1239', dark: '#240810', solid: '#4d1c29' },
+    // 9. Neon Azure / Blue
+    { primary: '#06b6d4', secondary: '#3b82f6', dark: '#061a29', solid: '#18384d' },
+    // 10. Warm Bronze / Chocolate
+    { primary: '#d97706', secondary: '#92400e', dark: '#241407', solid: '#452c1a' },
+    // 11. Midnight Lavender / Plum
+    { primary: '#8b5cf6', secondary: '#6d28d9', dark: '#190e2b', solid: '#392659' },
+    // 12. Steel Slate / Cobalt
+    { primary: '#64748b', secondary: '#475569', dark: '#111827', solid: '#2b3547' },
   ];
+
   let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
+  const str = id || 'default';
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const index = Math.abs(hash) % colors.length;
-  return colors[index];
+  const theme = themes[Math.abs(hash) % themes.length];
+
+  if (!isMesh) {
+    return theme.solid;
+  }
+
+  return `radial-gradient(circle at 50% 30%, ${theme.primary}55 0%, ${theme.secondary}25 45%, ${theme.dark} 95%), ${theme.dark}`;
 };
 
 const EMOJI_PRESETS = ['❤️', '👍', '🔥', '😂', '👏', '🎉', '😮', '😢', '💯', '🚀'] as const;
@@ -567,53 +590,65 @@ const CallOverlay: React.FC = () => {
     // Ringing / Ended state
     if (isRinging || isEnded) {
       return (
-        <div className={styles.overlay}>
+        <div 
+          className={styles.overlay}
+          style={{
+            background: getDiscordAdaptiveBg(activeGroupCall.conversationId || activeGroupCall.groupName || 'group'),
+          }}
+        >
           <div className={styles.panel}>
-            <div className={styles.groupBadge}>
-              <Users size={16} />
-              <span>Group Call</span>
-            </div>
-
-            <div className={styles.groupAvatarRow}>
-              {activeGroupCall.participants.slice(0, 3).map((p) => (
-                <img
-                  key={p.userId}
-                  src={p.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${p.name}`}
-                  alt={p.name}
-                  className={isRinging ? styles.ringingAvatar : styles.avatar}
-                  style={{ width: 80, height: 80 }}
-                />
-              ))}
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-              <h2 className={styles.name}>{activeGroupCall.groupName}</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
-                {isVideoCall ? (
-                  <VideoOn size={16} style={{ color: 'var(--accent-primary, #3b82f6)' }} />
-                ) : (
-                  <Phone size={14} style={{ color: 'var(--accent-success, #22c55e)' }} />
-                )}
-                <span
-                  className={styles.status}
-                  style={{
-                    margin: 0,
-                    fontSize: '13px',
-                    color: isEnded ? '#ef4444' : undefined,
-                  }}
-                >
-                  {isEnded
-                    ? 'Group call ended'
-                    : `Incoming ${isVideoCall ? 'Video' : 'Audio'} Group Call...`}
-                </span>
+            {/* Top Badge */}
+            <div className={styles.callingTopSection}>
+              <div className={styles.groupBadge} style={{ padding: '6px 18px', fontSize: '13px' }}>
+                <Users size={16} />
+                <span>Group Call</span>
               </div>
-              {isRinging && activeGroupCall.participants.length > 0 && (
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                  from {activeGroupCall.participants[0].name}
-                </span>
-              )}
             </div>
 
+            {/* Center Hero Presentation */}
+            <div className={styles.callingCenterHero}>
+              <div className={styles.groupAvatarRow}>
+                {activeGroupCall.participants.slice(0, 3).map((p) => (
+                  <img
+                    key={p.userId}
+                    src={p.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`}
+                    alt={p.name}
+                    className={isRinging ? styles.ringingAvatar : styles.avatar}
+                    style={{ width: 110, height: 110 }}
+                  />
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                <h2 className={styles.name}>{activeGroupCall.groupName}</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
+                  {isVideoCall ? (
+                    <VideoOn size={18} style={{ color: 'var(--accent-primary, #3b82f6)' }} />
+                  ) : (
+                    <Phone size={16} style={{ color: 'var(--accent-success, #22c55e)' }} />
+                  )}
+                  <span
+                    className={styles.status}
+                    style={{
+                      margin: 0,
+                      fontSize: '15px',
+                      color: isEnded ? '#ef4444' : 'rgba(255,255,255,0.85)',
+                    }}
+                  >
+                    {isEnded
+                      ? 'Group call ended'
+                      : `Incoming ${isVideoCall ? 'Video' : 'Audio'} Group Call...`}
+                  </span>
+                </div>
+                {isRinging && activeGroupCall.participants.length > 0 && (
+                  <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.65)', marginTop: '4px' }}>
+                    Started by {activeGroupCall.participants[0].name}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Bottom Controls */}
             <div className={styles.controls}>
               {isEnded ? null : (
                 <>
@@ -622,14 +657,14 @@ const CallOverlay: React.FC = () => {
                     onClick={() => joinGroupCall()}
                     title="Join Group Call"
                   >
-                    <Phone size={24} />
+                    <Phone size={28} />
                   </button>
                   <button
                     className={`${styles.btn} ${styles.btnDecline}`}
                     onClick={rejectGroupCall}
                     title="Decline"
                   >
-                    <PhoneOff size={24} />
+                    <PhoneOff size={28} />
                   </button>
                 </>
               )}
@@ -642,14 +677,35 @@ const CallOverlay: React.FC = () => {
     // Connecting state
     if (isConnecting) {
       return (
-        <div className={styles.overlay}>
+        <div 
+          className={styles.overlay}
+          style={{
+            background: getDiscordAdaptiveBg(activeGroupCall.conversationId || activeGroupCall.groupName || 'group'),
+          }}
+        >
           <div className={styles.panel}>
-            <div className={styles.groupBadge}>
-              <Users size={16} />
-              <span>Group Call</span>
+            <div className={styles.callingTopSection}>
+              <div className={styles.groupBadge} style={{ padding: '6px 18px', fontSize: '13px' }}>
+                <Users size={16} />
+                <span>Group Call</span>
+              </div>
             </div>
-            <h2 className={styles.name}>{activeGroupCall.groupName}</h2>
-            <span className={styles.status}>Connecting...</span>
+            <div className={styles.callingCenterHero}>
+              <div className={styles.groupAvatarRow}>
+                {activeGroupCall.participants.slice(0, 3).map((p) => (
+                  <img
+                    key={p.userId}
+                    src={p.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(p.name)}`}
+                    alt={p.name}
+                    className={styles.ringingAvatar}
+                    style={{ width: 110, height: 110 }}
+                  />
+                ))}
+              </div>
+              <h2 className={styles.name}>{activeGroupCall.groupName}</h2>
+              <span className={styles.status}>Connecting...</span>
+            </div>
+            <div className={styles.controls} />
           </div>
         </div>
       );

@@ -15,7 +15,8 @@ interface ActiveCall {
   peerName?: string;
   peerAvatar?: string;
   conversationId: string;
-  status: 'idle' | 'ringing' | 'connecting' | 'connected' | 'busy' | 'declined' | 'ended';
+  status: 'idle' | 'ringing' | 'connecting' | 'connected' | 'busy' | 'declined' | 'ended' | 'offline' | 'failed';
+  failureReason?: string;
 }
 
 // ─── Group Call Types ───
@@ -586,8 +587,13 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     socket.on('call-failed', (err: { reason: string }) => {
       audioSynthRef.current?.stop();
-      alert(`Call failed: ${err.reason}`);
-      cleanupCall();
+      const isOffline = err.reason?.toLowerCase().includes('offline');
+      setActiveCall(prev => prev ? { 
+        ...prev, 
+        status: isOffline ? 'offline' : 'failed', 
+        failureReason: err.reason || 'User offline' 
+      } : null);
+      setTimeout(cleanupCall, 2500);
     });
 
     return () => {

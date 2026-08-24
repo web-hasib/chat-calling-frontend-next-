@@ -10,6 +10,7 @@ import { EditProfileModal } from './components/EditProfileModal';
 import { SettingsPage } from './components/SettingsPage';
 import { CreateGroupModal } from './components/CreateGroupModal';
 import { JoinGroupModal } from './components/JoinGroupModal';
+import { AppLoadingScreen } from '../../components/AppLoadingScreen';
 
 function ChatLayoutContent({ children }: { children: React.ReactNode }) {
   const { user, token, logout, loading, updateProfile } = useAuth();
@@ -173,46 +174,7 @@ function ChatLayoutContent({ children }: { children: React.ReactNode }) {
   };
 
   if (loading || !user) {
-    return (
-      <div className="flex h-screen w-screen bg-[var(--bg-primary)] overflow-hidden">
-        <div className="w-[320px] border-r border-[var(--border-color)] bg-[var(--bg-secondary)] flex flex-col p-5 gap-5">
-          <div className="flex justify-between">
-            <div className="w-10 h-10 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-            <div className="w-20 h-6 bg-[var(--bg-tertiary)] rounded animate-pulse" />
-          </div>
-          <div className="w-full h-9 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-          <div className="flex flex-col gap-4 mt-2.5">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-[var(--bg-tertiary)] shrink-0 animate-pulse" />
-                <div className="flex-grow flex flex-col gap-1.5">
-                  <div className="w-[40%] h-3 bg-[var(--bg-tertiary)] rounded animate-pulse" />
-                  <div className="w-[70%] h-2.5 bg-[var(--bg-tertiary)] rounded animate-pulse" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="flex-1 flex flex-col bg-[var(--bg-primary)] p-6 gap-6">
-          <div className="flex justify-between pb-4 border-b border-[var(--border-color)]">
-            <div className="flex gap-3 items-center">
-              <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-              <div className="w-[100px] h-3.5 bg-[var(--bg-tertiary)] rounded animate-pulse" />
-            </div>
-            <div className="flex gap-2">
-              <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-              <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-            </div>
-          </div>
-          <div className="flex-1 flex flex-col gap-5 justify-end">
-            <div className="w-[200px] h-10 rounded-xl bg-[var(--bg-tertiary)] self-start animate-pulse" />
-            <div className="w-[140px] h-10 rounded-xl bg-[var(--bg-tertiary)] self-end animate-pulse" />
-            <div className="w-[260px] h-10 rounded-xl bg-[var(--bg-tertiary)] self-start animate-pulse" />
-          </div>
-          <div className="w-full h-11 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-        </div>
-      </div>
-    );
+    return <AppLoadingScreen />;
   }
 
   const isChatView = !!conversationId;

@@ -564,3 +564,30 @@ nextjs-portal, [data-nextjs-toast], #__next-build-watcher {
     transform: translateX(0);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════ */
+/* App Loading Screen Theme Styles                             */
+/* ═══════════════════════════════════════════════════════════ */
+
+.appLoadingScreen {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #0a0c10;
+  background-image: radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.15) 0%, transparent 65%);
+  user-select: none;
+  transition: background-color 0.25s ease;
+}
+
+.light-theme .appLoadingScreen,
+html.light-theme .appLoadingScreen,
+body.light-theme .appLoadingScreen,
+.light-theme.appLoadingScreen {
+  background-color: #f8fafc !important;
+  background-image: radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.08) 0%, rgba(224, 231, 255, 0.4) 40%, transparent 70%) !important;
+}
