@@ -93,6 +93,15 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
+html.landing-page-active, body.landing-page-active {
+  overflow: auto !important;
+  overflow-y: auto !important;
+  height: auto !important;
+  min-height: 100vh !important;
+  overscroll-behavior-y: auto !important;
+  touch-action: auto !important;
+}
+
 /* Hide Next.js dev tools floating badge/portal */
 nextjs-portal, [data-nextjs-toast], #__next-build-watcher {
   display: none !important;

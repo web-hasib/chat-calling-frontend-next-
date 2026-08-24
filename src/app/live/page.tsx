@@ -94,7 +94,7 @@ export default function LivePage() {
   // Redirect if not logged in
   useEffect(() => {
     if (!loading && (!token || !user)) {
-      router.push('/');
+      router.push('/auth');
     }
   }, [loading, token, user, router]);
 

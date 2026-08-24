@@ -55,7 +55,7 @@ function ChatLayoutContent({ children }: { children: React.ReactNode }) {
 
   // Redirect if no token
   useEffect(() => {
-    if (!loading && !token) router.push('/');
+    if (!loading && !token) router.push('/auth');
   }, [token, loading, router]);
 
   // Load conversations on token
