@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useCall } from '../context/CallContext';
 import { useAuth } from '../context/AuthContext';
 import styles from './CallOverlay.module.css';
-import { Phone, PhoneOff, Mic, MicOff, Video as VideoOn, VideoOff, Monitor, Users, LogOut, MessageSquare, Smile, Send, X as CloseIcon, Maximize2, Minimize2, Settings } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Video as VideoOn, VideoOff, Monitor, Users, LogOut, MessageSquare, Smile, Send, X as CloseIcon, Maximize2, Minimize2, Settings, FlipHorizontal } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { DeviceSettingsModal } from './DeviceSettingsModal';
 import { OneToOneCallOverlay } from './OneToOneCallOverlay';
@@ -257,6 +257,10 @@ const CallOverlay: React.FC = () => {
     toggleMute,
     toggleVideo,
     toggleScreenShare,
+    switchCamera,
+    switchMicrophone,
+    switchAudioOutput,
+    currentFacingMode,
     // Group call
     activeGroupCall,
     groupLocalStream,
@@ -1222,6 +1226,16 @@ const CallOverlay: React.FC = () => {
 
             {isVideoCall && (
               <button
+                className={styles.videoBtn}
+                onClick={() => switchCamera()}
+                title="Flip Camera"
+              >
+                <FlipHorizontal size={20} />
+              </button>
+            )}
+
+            {isVideoCall && (
+              <button
                 className={isGroupScreenSharing ? styles.videoBtnActive : styles.videoBtn}
                 onClick={toggleGroupScreenShare}
                 title={isGroupScreenSharing ? 'Stop Sharing' : 'Share Screen'}
@@ -1316,6 +1330,9 @@ const CallOverlay: React.FC = () => {
           <DeviceSettingsModal
             isOpen={showSettingsModal}
             onClose={() => setShowSettingsModal(false)}
+            onSelectAudioInput={switchMicrophone}
+            onSelectVideoInput={switchCamera}
+            onSelectAudioOutput={switchAudioOutput}
             isFullscreen={isFullscreen}
             onToggleFullscreen={toggleFullscreen}
             isFootRaised={isFootRaised}

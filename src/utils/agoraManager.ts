@@ -31,29 +31,20 @@ export interface AgoraTokenResponse {
 }
 
 export async function fetchAgoraToken(channelName: string, userId: string, role = 'publisher'): Promise<AgoraTokenResponse> {
-  const configuredBackendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
-  const urlsToTry: string[] = [
-    `${configuredBackendUrl}/agora/token?channelName=${encodeURIComponent(channelName)}&userId=${encodeURIComponent(userId)}&role=${role}`,
-  ];
+  const configuredBackendUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
+  const url = `${configuredBackendUrl}/agora/token?channelName=${encodeURIComponent(channelName)}&userId=${encodeURIComponent(userId)}&role=${role}`;
 
-  // If the configured URL is a remote URL (e.g. onrender.com) that hasn't been deployed yet, fallback to localhost:5000
-  if (!configuredBackendUrl.includes('localhost:5000') && !configuredBackendUrl.includes('127.0.0.1:5000')) {
-    urlsToTry.push(`http://localhost:5000/agora/token?channelName=${encodeURIComponent(channelName)}&userId=${encodeURIComponent(userId)}&role=${role}`);
-  }
-
-  for (const url of urlsToTry) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        return await res.json();
-      }
-      console.warn(`[Agora] Token request to ${url} returned status ${res.status}`);
-    } catch (err) {
-      console.warn(`[Agora] Token request to ${url} failed:`, err);
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (res.ok && data.token) {
+      return data;
     }
+    console.error(`[Agora] Token request to ${url} failed with status ${res.status}:`, data?.message || data);
+  } catch (err) {
+    console.error(`[Agora] Token request to ${url} failed:`, err);
   }
 
-  console.error('[Agora] All token endpoints failed. Please make sure the backend is running and deployed.');
   const fallbackAppId = process.env.NEXT_PUBLIC_AGORA_APP_ID || '86633dad29ae45f1b6b3fdfe088db8ca';
   return {
     token: '',
@@ -256,6 +247,28 @@ export class AgoraCallManager {
       return nativeTrack;
     } catch (err) {
       console.error('[Agora] Screen share failed:', err);
+      return null;
+    }
+  }
+
+  async switchCamera(deviceId: string): Promise<MediaStreamTrack | null> {
+    if (!this.localVideoTrack) return null;
+    try {
+      await this.localVideoTrack.setDevice(deviceId);
+      return this.localVideoTrack.getMediaStreamTrack();
+    } catch (err) {
+      console.error('[Agora] Failed to switch camera device:', err);
+      return null;
+    }
+  }
+
+  async switchMicrophone(deviceId: string): Promise<MediaStreamTrack | null> {
+    if (!this.localAudioTrack) return null;
+    try {
+      await this.localAudioTrack.setDevice(deviceId);
+      return this.localAudioTrack.getMediaStreamTrack();
+    } catch (err) {
+      console.error('[Agora] Failed to switch microphone device:', err);
       return null;
     }
   }

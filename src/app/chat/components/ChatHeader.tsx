@@ -21,9 +21,10 @@ export function ChatHeader({
   showDetails, activeThemeColor,
   onBack, onAudioCall, onVideoCall, onToggleDetails,
 }: ChatHeaderProps) {
-  const { groupCallStatus, joinGroupCall, activeGroupCall } = useCall();
+  const { groupCallStatus, joinGroupCall, activeGroupCall, isUserInCallOnOtherDevice, activeCall } = useCall();
 
   const isCallActive = groupCallStatus?.active && !activeGroupCall;
+  const isBusyInCall = isUserInCallOnOtherDevice || !!activeCall || !!activeGroupCall;
 
   return (
     <div className="px-3 sm:px-5 py-4 border-b border-[var(--border-color)] bg-[var(--bg-secondary)] flex justify-between items-center h-[72px] shrink-0">
@@ -52,8 +53,16 @@ export function ChatHeader({
         </div>
       </div>
       <div className="flex items-center gap-1.5 sm:gap-2">
+        {/* If user is in call on another device, show sleek indicator and hide call buttons */}
+        {isUserInCallOnOtherDevice && (
+          <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            In Call on Another Device
+          </span>
+        )}
+
         {/* Dynamic Join Button for active Group Call */}
-        {isCallActive && activeConvo?.isGroup && (
+        {isCallActive && !isUserInCallOnOtherDevice && activeConvo?.isGroup && (
           <button
             onClick={() => joinGroupCall()}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-bold text-white bg-green-500 hover:bg-green-600 cursor-pointer shadow-md transition-all animate-bounce hover:animate-none"
@@ -65,7 +74,7 @@ export function ChatHeader({
           </button>
         )}
 
-        {!isCallActive && (
+        {!isCallActive && !isBusyInCall && (
           <>
             <button className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer w-9 h-9 rounded-full flex items-center justify-center hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors" onClick={onAudioCall} title="Audio Call">
               <Phone size={18} />

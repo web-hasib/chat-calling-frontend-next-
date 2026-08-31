@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { useSocket } from './SocketContext';
 import { useAuth } from './AuthContext';
-import { triggerPhoneVibration, stopPhoneVibration } from '../utils/notifications';
+import { triggerPhoneVibration, stopPhoneVibration, showPushNotification } from '../utils/notifications';
 import { AgoraCallManager } from '../utils/agoraManager';
 
 // ─── 1:1 Call Types (unchanged) ───
@@ -79,6 +79,13 @@ interface CallContextType {
   toggleMute: () => void;
   toggleVideo: () => void;
   toggleScreenShare: () => Promise<void>;
+
+  // Device & Camera management (Both 1:1 and Group)
+  switchCamera: (deviceId?: string) => Promise<void>;
+  switchMicrophone: (deviceId: string) => Promise<void>;
+  switchAudioOutput: (deviceId: string) => Promise<void>;
+  currentFacingMode: 'user' | 'environment';
+  isUserInCallOnOtherDevice: boolean;
 
   // Group call
   activeGroupCall: ActiveGroupCall | null;
@@ -341,6 +348,15 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [groupCallHandRaisedStates, setGroupCallHandRaisedStates] = useState<Record<string, boolean>>({});
   const [groupCallFootRaisedStates, setGroupCallFootRaisedStates] = useState<Record<string, boolean>>({});
 
+  const [currentFacingMode, setCurrentFacingMode] = useState<'user' | 'environment'>('user');
+  const currentFacingModeRef = useRef<'user' | 'environment'>('user');
+  const outgoingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isUserInCallOnOtherDevice, setIsUserInCallOnOtherDevice] = useState<boolean>(false);
+
+  useEffect(() => {
+    currentFacingModeRef.current = currentFacingMode;
+  }, [currentFacingMode]);
+
   // Map of userId -> RTCPeerConnection for group mesh
   const groupPeerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const groupScreenTrackRef = useRef<MediaStreamTrack | null>(null);
@@ -399,6 +415,30 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     audioSynthRef.current = new CallAudioSynthesizer();
     return () => {
       audioSynthRef.current?.stop();
+    };
+  }, []);
+
+  // Listen to interactive Service Worker Push Notification clicks (Answer / Decline)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'PUSH_CALL_ACCEPTED') {
+        if (activeCallRef.current?.status === 'ringing') {
+          acceptCall();
+        } else if (activeGroupCallRef.current?.status === 'ringing') {
+          joinGroupCall(event.data.conversationId, event.data.callType);
+        }
+      } else if (event.data?.type === 'PUSH_CALL_DECLINED') {
+        if (activeCallRef.current?.status === 'ringing') {
+          rejectCall();
+        } else if (activeGroupCallRef.current?.status === 'ringing') {
+          rejectGroupCall();
+        }
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleSwMessage);
     };
   }, []);
 
@@ -514,9 +554,23 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       incomingOfferRef.current = data.offer;
       earlyCandidatesRef.current = [];
       audioSynthRef.current?.startRingtoneIncoming();
+
+      // Trigger Web Push Notification banner
+      showPushNotification(data.callerName || 'Incoming Caller', {
+        body: `Incoming ${data.type === 'VIDEO' ? 'Video' : 'Audio'} Call...`,
+        isCall: true,
+        requireInteraction: true,
+        tag: 'incoming-call-alert',
+        conversationId: data.conversationId,
+        callType: data.type,
+      });
     });
 
     socket.on('call-accepted', async (data: { answer: any; receiverName?: string; receiverAvatar?: string }) => {
+      if (outgoingTimeoutRef.current) {
+        clearTimeout(outgoingTimeoutRef.current);
+        outgoingTimeoutRef.current = null;
+      }
       if (peerConnectionRef.current) {
         try {
           audioSynthRef.current?.stop();
@@ -570,6 +624,10 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     socket.on('call-rejected', (data?: { reason?: string }) => {
+      if (outgoingTimeoutRef.current) {
+        clearTimeout(outgoingTimeoutRef.current);
+        outgoingTimeoutRef.current = null;
+      }
       audioSynthRef.current?.stop();
       if (data?.reason === 'busy') {
         setActiveCall(prev => prev ? { ...prev, status: 'busy' } : null);
@@ -580,12 +638,20 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     socket.on('call-ended', () => {
+      if (outgoingTimeoutRef.current) {
+        clearTimeout(outgoingTimeoutRef.current);
+        outgoingTimeoutRef.current = null;
+      }
       audioSynthRef.current?.stop();
       setActiveCall(prev => prev ? { ...prev, status: 'ended' } : null);
       setTimeout(cleanupCall, 1500);
     });
 
     socket.on('call-failed', (err: { reason: string }) => {
+      if (outgoingTimeoutRef.current) {
+        clearTimeout(outgoingTimeoutRef.current);
+        outgoingTimeoutRef.current = null;
+      }
       audioSynthRef.current?.stop();
       const isOffline = err.reason?.toLowerCase().includes('offline');
       setActiveCall(prev => prev ? { 
@@ -596,6 +662,15 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setTimeout(cleanupCall, 2500);
     });
 
+    // Multi-device sync: if this user enters/leaves call on another device/tab
+    socket.on('user-device-call-sync', (data: { inCall: boolean; socketId: string | null; type: string | null }) => {
+      if (data.inCall && data.socketId !== socket.id) {
+        setIsUserInCallOnOtherDevice(true);
+      } else {
+        setIsUserInCallOnOtherDevice(false);
+      }
+    });
+
     return () => {
       socket.off('incoming-call');
       socket.off('call-accepted');
@@ -604,6 +679,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       socket.off('call-rejected');
       socket.off('call-ended');
       socket.off('call-failed');
+      socket.off('user-device-call-sync');
     };
   }, [socket]);
 
@@ -624,23 +700,24 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const initMedia = async (type: 'AUDIO' | 'VIDEO', isGroup = false) => {
     try {
+      const savedVideoIn = typeof window !== 'undefined' ? localStorage.getItem('chat_calling_video_in') : null;
+      const savedAudioIn = typeof window !== 'undefined' ? localStorage.getItem('chat_calling_audio_in') : null;
+      const facing = currentFacingModeRef.current || 'user';
+
       const videoConstraints = isGroup
-        ? {
-            width: { ideal: 640, max: 854 },
-            height: { ideal: 360, max: 480 },
-            frameRate: { ideal: 15, max: 20 },
-            facingMode: 'user',
-          }
-        : {
-            width: { ideal: 1280, max: 1920 },
-            height: { ideal: 720, max: 1080 },
-            facingMode: 'user',
-          };
+        ? (savedVideoIn
+            ? { deviceId: { exact: savedVideoIn }, width: { ideal: 640, max: 854 }, height: { ideal: 360, max: 480 }, frameRate: { ideal: 15, max: 20 } }
+            : { width: { ideal: 640, max: 854 }, height: { ideal: 360, max: 480 }, frameRate: { ideal: 15, max: 20 }, facingMode: facing })
+        : (savedVideoIn
+            ? { deviceId: { exact: savedVideoIn }, width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 } }
+            : { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, facingMode: facing });
 
       const audioConstraints = {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
+        channelCount: 1,
+        ...(savedAudioIn ? { deviceId: { exact: savedAudioIn } } : {}),
       };
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -652,12 +729,15 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (type === 'VIDEO') {
         console.warn('Video acquisition failed, falling back to audio only');
         try {
+          const savedAudioIn = typeof window !== 'undefined' ? localStorage.getItem('chat_calling_audio_in') : null;
           const fallbackStream = await navigator.mediaDevices.getUserMedia({
             video: false,
             audio: {
               echoCancellation: true,
               noiseSuppression: true,
               autoGainControl: true,
+              channelCount: 1,
+              ...(savedAudioIn ? { deviceId: { exact: savedAudioIn } } : {}),
             },
           });
           return fallbackStream;
@@ -704,6 +784,11 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     type: 'AUDIO' | 'VIDEO',
     conversationId: string
   ) => {
+    if (isUserInCallOnOtherDevice) {
+      alert('You are already active in a call on another device.');
+      return;
+    }
+
     try {
       setActiveCall({
         role: 'caller',
@@ -715,6 +800,24 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         status: 'ringing',
       });
       audioSynthRef.current?.startRingingOutgoing();
+
+      // 45-Second Outgoing Call Timeout Guard
+      if (outgoingTimeoutRef.current) {
+        clearTimeout(outgoingTimeoutRef.current);
+      }
+      outgoingTimeoutRef.current = setTimeout(() => {
+        if (activeCallRef.current?.status === 'ringing' && activeCallRef.current.role === 'caller') {
+          console.log('[Call] Outgoing call timed out after 45s with no answer');
+          socket?.emit('end-call', {
+            to: targetUserId,
+            conversationId,
+            type,
+            reason: 'no_answer',
+          });
+          setActiveCall(prev => prev ? { ...prev, status: 'declined', failureReason: 'No Answer' } : null);
+          setTimeout(cleanupCall, 2000);
+        }
+      }, 45000);
 
       const stream = await initMedia(type);
       setLocalStream(stream);
@@ -904,7 +1007,133 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // ─── Live Device & Camera Switchers (1:1 & Group) ───
+
+  const switchCamera = useCallback(async (deviceId?: string) => {
+    try {
+      let nextFacing = currentFacingModeRef.current;
+      if (!deviceId) {
+        nextFacing = currentFacingModeRef.current === 'user' ? 'environment' : 'user';
+        currentFacingModeRef.current = nextFacing;
+        setCurrentFacingMode(nextFacing);
+      }
+
+      // 1. Handle 1:1 WebRTC Call
+      if (peerConnectionRef.current && localStream) {
+        const videoConstraints = deviceId
+          ? { deviceId: { exact: deviceId } }
+          : { facingMode: { ideal: nextFacing } };
+
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false,
+        });
+
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        if (newVideoTrack) {
+          const videoSender = peerConnectionRef.current.getSenders().find(s => s.track?.kind === 'video');
+          if (videoSender) {
+            await videoSender.replaceTrack(newVideoTrack);
+          }
+          const oldVideoTrack = localStream.getVideoTracks()[0];
+          if (oldVideoTrack) oldVideoTrack.stop();
+
+          const updatedStream = new MediaStream([newVideoTrack, ...localStream.getAudioTracks()]);
+          setLocalStream(updatedStream);
+          if (deviceId) {
+            try { localStorage.setItem('chat_calling_video_in', deviceId); } catch {}
+          }
+        }
+      }
+
+      // 2. Handle Agora Group Call
+      if (agoraManagerRef.current && activeGroupCallRef.current) {
+        if (deviceId) {
+          await agoraManagerRef.current.switchCamera(deviceId);
+          try { localStorage.setItem('chat_calling_video_in', deviceId); } catch {}
+        } else {
+          // Mobile camera flip
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoDevices = devices.filter(d => d.kind === 'videoinput');
+          if (videoDevices.length > 1) {
+            const currentDevId = localStorage.getItem('chat_calling_video_in');
+            const otherDev = videoDevices.find(d => d.deviceId !== currentDevId) || videoDevices[1];
+            if (otherDev) {
+              await agoraManagerRef.current.switchCamera(otherDev.deviceId);
+              try { localStorage.setItem('chat_calling_video_in', otherDev.deviceId); } catch {}
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[SwitchCamera] Failed to switch camera:', err);
+    }
+  }, [localStream]);
+
+  const switchMicrophone = useCallback(async (deviceId: string) => {
+    try {
+      if (!deviceId) return;
+      try { localStorage.setItem('chat_calling_audio_in', deviceId); } catch {}
+
+      // 1. Handle 1:1 WebRTC Call
+      if (peerConnectionRef.current && localStream) {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            deviceId: { exact: deviceId },
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+          },
+          video: false,
+        });
+
+        const newAudioTrack = newStream.getAudioTracks()[0];
+        if (newAudioTrack) {
+          const audioSender = peerConnectionRef.current.getSenders().find(s => s.track?.kind === 'audio');
+          if (audioSender) {
+            await audioSender.replaceTrack(newAudioTrack);
+          }
+          const oldAudioTrack = localStream.getAudioTracks()[0];
+          if (oldAudioTrack) oldAudioTrack.stop();
+
+          const updatedStream = new MediaStream([...localStream.getVideoTracks(), newAudioTrack]);
+          setLocalStream(updatedStream);
+        }
+      }
+
+      // 2. Handle Agora Group Call
+      if (agoraManagerRef.current && activeGroupCallRef.current) {
+        await agoraManagerRef.current.switchMicrophone(deviceId);
+      }
+    } catch (err) {
+      console.error('[SwitchMicrophone] Failed to switch microphone:', err);
+    }
+  }, [localStream]);
+
+  const switchAudioOutput = useCallback(async (deviceId: string) => {
+    try {
+      if (!deviceId) return;
+      try { localStorage.setItem('chat_calling_audio_out', deviceId); } catch {}
+
+      if ('setSinkId' in HTMLMediaElement.prototype) {
+        const mediaElements = document.querySelectorAll('audio, video');
+        mediaElements.forEach((el) => {
+          if (typeof (el as any).setSinkId === 'function') {
+            (el as any).setSinkId(deviceId).catch((e: any) => console.warn('Could not set sink id on element:', e));
+          }
+        });
+      }
+    } catch (err) {
+      console.error('[SwitchAudioOutput] Failed to switch audio output:', err);
+    }
+  }, []);
+
   const cleanupCall = () => {
+    if (outgoingTimeoutRef.current) {
+      clearTimeout(outgoingTimeoutRef.current);
+      outgoingTimeoutRef.current = null;
+    }
     audioSynthRef.current?.stop();
     stopCallTimer();
     setIsPeerVideoMuted(false);
@@ -1105,6 +1334,16 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       setGroupCallStartedAt(data.startedAt);
       audioSynthRef.current?.startRingtoneIncoming();
+
+      // Trigger Web Push Notification banner
+      showPushNotification(data.groupName || 'Group Call', {
+        body: `${data.initiatorName || 'Someone'} started an ${data.type === 'VIDEO' ? 'video' : 'audio'} group call`,
+        isCall: true,
+        requireInteraction: true,
+        tag: 'incoming-group-call-alert',
+        conversationId: data.conversationId,
+        callType: data.type,
+      });
     });
 
     socket.on('group-call-started', (data: {
@@ -1426,6 +1665,10 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     type: 'AUDIO' | 'VIDEO'
   ) => {
     if (!socket || !user) return;
+    if (isUserInCallOnOtherDevice) {
+      alert('You are already active in a call on another device.');
+      return;
+    }
 
     try {
       setActiveGroupCall({
@@ -1467,6 +1710,10 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const callType = convoTypeToJoin && typeof convoTypeToJoin === 'string' ? convoTypeToJoin : activeGroupCall?.type || groupCallStatus?.type || 'VIDEO';
 
     if (!activeConvoId || !socket || !user) return;
+    if (isUserInCallOnOtherDevice) {
+      alert('You are already active in a call on another device.');
+      return;
+    }
 
     try {
       audioSynthRef.current?.stop();
@@ -1809,6 +2056,13 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toggleMute,
         toggleVideo,
         toggleScreenShare,
+
+        // Device & Camera management
+        switchCamera,
+        switchMicrophone,
+        switchAudioOutput,
+        currentFacingMode,
+        isUserInCallOnOtherDevice,
 
         // Group call
         activeGroupCall,

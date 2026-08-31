@@ -2,11 +2,12 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import styles from './CallOverlay.module.css';
-import { Phone, PhoneOff, Mic, MicOff, Video as VideoOn, VideoOff, Monitor, Settings, Volume2, Smartphone, Shield, MoreVertical } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Video as VideoOn, VideoOff, Monitor, Settings, Volume2, Smartphone, Shield, MoreVertical, FlipHorizontal } from 'lucide-react';
 import { DeviceSettingsModal } from './DeviceSettingsModal';
 import { startIncomingCallRingtoneLoop, stopIncomingCallRingtoneLoop } from '../utils/notifications';
 import { getDiscordAdaptiveBg } from './CallOverlay';
 import { useAuth } from '../context/AuthContext';
+import { useCall } from '../context/CallContext';
 
 interface OneToOneCallOverlayProps {
   activeCall: {
@@ -54,6 +55,7 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
   onToggleScreenShare,
 }) => {
   const { user: currentUser } = useAuth();
+  const { switchCamera, switchMicrophone, switchAudioOutput } = useCall();
   const localVideoElRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoElRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioElRef = useRef<HTMLAudioElement | null>(null);
@@ -491,6 +493,18 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
             {isVideoMuted ? <VideoOff size={20} /> : <VideoOn size={20} />}
           </button>
 
+          {/* Quick Flip Camera (Mobile / Desktop) */}
+          <button
+            className={styles.videoBtn}
+            onClick={(e) => {
+              e.stopPropagation();
+              switchCamera();
+            }}
+            title="Flip Camera"
+          >
+            <FlipHorizontal size={20} />
+          </button>
+
           {/* Screen Share button (supported on both mobile & desktop) */}
           <button
             className={isScreenSharing ? styles.videoBtnActive : styles.videoBtn}
@@ -542,6 +556,9 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
         <DeviceSettingsModal
           isOpen={showSettingsModal}
           onClose={() => setShowSettingsModal(false)}
+          onSelectAudioInput={switchMicrophone}
+          onSelectVideoInput={switchCamera}
+          onSelectAudioOutput={switchAudioOutput}
           isScreenSharing={isScreenSharing}
           onToggleScreenShare={onToggleScreenShare}
         />
