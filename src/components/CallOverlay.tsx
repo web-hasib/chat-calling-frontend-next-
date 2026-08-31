@@ -238,6 +238,38 @@ const RemoteAudioElement: React.FC<{
 });
 RemoteAudioElement.displayName = 'RemoteAudioElement';
 
+const LocalVideoElement: React.FC<{
+  stream: MediaStream | null;
+  className?: string;
+  isMuted?: boolean;
+}> = React.memo(({ stream, className, isMuted = true }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [stream]);
+
+  return (
+    <video
+      ref={(el) => {
+        videoRef.current = el;
+        if (el && stream && el.srcObject !== stream) {
+          el.srcObject = stream;
+          el.play().catch(() => {});
+        }
+      }}
+      autoPlay
+      playsInline
+      muted={isMuted}
+      className={className}
+    />
+  );
+});
+LocalVideoElement.displayName = 'LocalVideoElement';
+
 const CallOverlay: React.FC = () => {
   const { user } = useAuth();
   const {
@@ -865,11 +897,8 @@ const CallOverlay: React.FC = () => {
                               return (
                                 <div className={styles.focusedVideoTile} onClick={() => setFocusedUserId(null)} title="Click to unpin">
                                   {!isGroupVideoMuted ? (
-                                    <video
-                                      ref={groupLocalVideoRef}
-                                      autoPlay
-                                      playsInline
-                                      muted
+                                    <LocalVideoElement
+                                      stream={groupLocalStream}
                                       className={styles.focusedVideoEl}
                                     />
                                   ) : (
@@ -936,11 +965,8 @@ const CallOverlay: React.FC = () => {
                             onPointerUp={handleGroupPointerUp}
                           >
                             {!isGroupVideoMuted ? (
-                              <video
-                                ref={groupLocalVideoRef}
-                                autoPlay
-                                playsInline
-                                muted
+                              <LocalVideoElement
+                                stream={groupLocalStream}
                                 className={styles.groupVideoEl}
                               />
                             ) : (
@@ -977,11 +1003,8 @@ const CallOverlay: React.FC = () => {
                         title={groupPipDocked ? 'Click to show preview' : undefined}
                       >
                         {!isGroupVideoMuted ? (
-                          <video
-                            ref={groupLocalVideoRef}
-                            autoPlay
-                            playsInline
-                            muted
+                          <LocalVideoElement
+                            stream={groupLocalStream}
                             className={styles.groupVideoEl}
                           />
                         ) : (

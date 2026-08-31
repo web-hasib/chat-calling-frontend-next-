@@ -671,6 +671,15 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
+    // Multi-device sync: if an incoming call is answered or declined on another device
+    socket.on('incoming-call-handled-elsewhere', (data: { action: string }) => {
+      if (activeCallRef.current?.status === 'ringing' && activeCallRef.current.role === 'receiver') {
+        audioSynthRef.current?.stop();
+        stopPhoneVibration();
+        setActiveCall(null);
+      }
+    });
+
     return () => {
       socket.off('incoming-call');
       socket.off('call-accepted');
@@ -680,6 +689,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       socket.off('call-ended');
       socket.off('call-failed');
       socket.off('user-device-call-sync');
+      socket.off('incoming-call-handled-elsewhere');
     };
   }, [socket]);
 
@@ -950,6 +960,12 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (!isScreenSharing) {
       try {
+        const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (isMobile || typeof navigator?.mediaDevices?.getDisplayMedia !== 'function') {
+          alert('Screen sharing is not supported on mobile browsers. Please use a desktop browser (Chrome, Edge, Firefox, Brave).');
+          return;
+        }
+
         const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         const screenTrack = screenStream.getVideoTracks()[0];
         if (!screenTrack) return;
@@ -975,8 +991,13 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isScreenSharing: true,
           });
         }
-      } catch (err) {
-        console.error('Error starting screen share', err);
+      } catch (err: any) {
+        if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
+          console.log('[ScreenShare] User cancelled screen sharing');
+        } else {
+          console.error('Error starting screen share', err);
+          alert('Could not start screen share. Please check screen recording permissions in your browser or OS settings.');
+        }
       }
     } else {
       stopScreenShareHelper();
@@ -1020,6 +1041,12 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // 1. Handle 1:1 WebRTC Call
       if (peerConnectionRef.current && localStream) {
+        // Stop old video track first so mobile device camera hardware lock is released
+        const oldVideoTrack = localStream.getVideoTracks()[0];
+        if (oldVideoTrack) {
+          oldVideoTrack.stop();
+        }
+
         const videoConstraints = deviceId
           ? { deviceId: { exact: deviceId } }
           : { facingMode: { ideal: nextFacing } };
@@ -1035,8 +1062,6 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (videoSender) {
             await videoSender.replaceTrack(newVideoTrack);
           }
-          const oldVideoTrack = localStream.getVideoTracks()[0];
-          if (oldVideoTrack) oldVideoTrack.stop();
 
           const updatedStream = new MediaStream([newVideoTrack, ...localStream.getAudioTracks()]);
           setLocalStream(updatedStream);
@@ -1049,8 +1074,13 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 2. Handle Agora Group Call
       if (agoraManagerRef.current && activeGroupCallRef.current) {
         if (deviceId) {
-          await agoraManagerRef.current.switchCamera(deviceId);
+          const newTrack = await agoraManagerRef.current.switchCamera(deviceId);
           try { localStorage.setItem('chat_calling_video_in', deviceId); } catch {}
+          if (newTrack && groupLocalStreamRef.current) {
+            const updatedStream = new MediaStream([newTrack, ...groupLocalStreamRef.current.getAudioTracks()]);
+            setGroupLocalStream(updatedStream);
+            groupLocalStreamRef.current = updatedStream;
+          }
         } else {
           // Mobile camera flip
           const devices = await navigator.mediaDevices.enumerateDevices();
@@ -1059,8 +1089,13 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const currentDevId = localStorage.getItem('chat_calling_video_in');
             const otherDev = videoDevices.find(d => d.deviceId !== currentDevId) || videoDevices[1];
             if (otherDev) {
-              await agoraManagerRef.current.switchCamera(otherDev.deviceId);
+              const newTrack = await agoraManagerRef.current.switchCamera(otherDev.deviceId);
               try { localStorage.setItem('chat_calling_video_in', otherDev.deviceId); } catch {}
+              if (newTrack && groupLocalStreamRef.current) {
+                const updatedStream = new MediaStream([newTrack, ...groupLocalStreamRef.current.getAudioTracks()]);
+                setGroupLocalStream(updatedStream);
+                groupLocalStreamRef.current = updatedStream;
+              }
             }
           }
         }
@@ -1636,6 +1671,15 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
+    // Multi-device sync: if an incoming group call is answered or declined on another device
+    socket.on('group-call-handled-elsewhere', (data: { conversationId: string; action: string }) => {
+      if (activeGroupCallRef.current?.status === 'ringing' && activeGroupCallRef.current.role === 'participant') {
+        audioSynthRef.current?.stop();
+        stopPhoneVibration();
+        setActiveGroupCall(null);
+      }
+    });
+
     return () => {
       socket.off('group-call-incoming');
       socket.off('group-call-started');
@@ -1652,6 +1696,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       socket.off('group-call-media-state-received');
       socket.off('group-call-force-muted');
       socket.off('group-call-force-unmuted');
+      socket.off('group-call-handled-elsewhere');
     };
   }, [socket, createGroupPeerConnection, removeGroupPeer, cleanupGroupCall]);
 
@@ -1844,6 +1889,12 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const toggleGroupScreenShare = useCallback(async () => {
     if (!isGroupScreenSharing) {
       try {
+        const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (isMobile || (typeof navigator !== 'undefined' && typeof navigator?.mediaDevices?.getDisplayMedia !== 'function')) {
+          alert('Screen sharing is not supported on mobile browsers. Please use a desktop browser.');
+          return;
+        }
+
         let screenTrack: MediaStreamTrack | null = null;
         if (agoraManagerRef.current) {
           screenTrack = await agoraManagerRef.current.startScreenShare();
@@ -1871,8 +1922,13 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isScreenSharing: true,
           });
         }
-      } catch (err) {
-        console.error('Error starting group screen share', err);
+      } catch (err: any) {
+        if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
+          console.log('[GroupScreenShare] User cancelled screen sharing');
+        } else {
+          console.error('Error starting group screen share', err);
+          alert('Could not start screen share. Please check screen recording permissions in your browser or OS settings.');
+        }
       }
     } else {
       stopGroupScreenShareHelper();

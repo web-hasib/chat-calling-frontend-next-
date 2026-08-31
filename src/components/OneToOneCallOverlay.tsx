@@ -36,6 +36,37 @@ interface OneToOneCallOverlayProps {
   onToggleScreenShare: () => void;
 }
 
+const LocalVideoElement: React.FC<{
+  stream: MediaStream | null;
+  style?: React.CSSProperties;
+}> = React.memo(({ stream, style }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [stream]);
+
+  return (
+    <video
+      ref={(el) => {
+        videoRef.current = el;
+        if (el && stream && el.srcObject !== stream) {
+          el.srcObject = stream;
+          el.play().catch(() => {});
+        }
+      }}
+      autoPlay
+      playsInline
+      muted
+      style={style}
+    />
+  );
+});
+LocalVideoElement.displayName = 'LocalVideoElement';
+
 export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
   activeCall,
   localStream,
@@ -445,11 +476,8 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
           title={isDocked ? 'Click to show preview' : undefined}
         >
           {!isVideoMuted ? (
-            <video
-              ref={localVideoElRef}
-              autoPlay
-              playsInline
-              muted
+            <LocalVideoElement
+              stream={localStream}
               style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
             />
           ) : (
