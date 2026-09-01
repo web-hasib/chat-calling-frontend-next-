@@ -5,6 +5,7 @@ import { useSocket } from './SocketContext';
 import { useAuth } from './AuthContext';
 import { triggerPhoneVibration, stopPhoneVibration, showPushNotification } from '../utils/notifications';
 import { AgoraCallManager } from '../utils/agoraManager';
+import { soundboardManager, SoundboardItem } from '../utils/soundboardManager';
 
 // ─── 1:1 Call Types (unchanged) ───
 
@@ -38,25 +39,35 @@ interface ActiveGroupCall {
   startedAt?: number;
 }
 
-interface GroupCallStatus {
-  active: boolean;
-  type?: 'AUDIO' | 'VIDEO';
-  startedAt?: number;
-  participantsCount?: number;
+export interface GroupCallEmojiReaction {
+  userId: string;
+  emoji: string;
+  id: number;
 }
 
-interface GroupChatMessage {
+export interface GroupCallSoundboardEvent {
+  userId: string;
+  soundId: string;
+  name: string;
+  emoji: string;
+  id: number;
+}
+
+export interface GroupChatMessage {
   id?: string;
   senderId: string;
   senderName: string;
+  senderAvatar?: string;
   message: string;
   timestamp: number;
 }
 
-interface GroupCallEmojiReaction {
-  userId: string;
-  emoji: string;
-  id: number;
+export interface GroupCallStatus {
+  active: boolean;
+  type?: 'AUDIO' | 'VIDEO';
+  startedAt?: number;
+  participants?: string[];
+  participantsCount?: number;
 }
 
 // ─── Context Type ───
@@ -100,6 +111,7 @@ interface CallContextType {
   groupCallStatus: GroupCallStatus | null;
   groupCallMessages: GroupChatMessage[];
   latestEmojiReaction: GroupCallEmojiReaction | null;
+  latestSoundboardEvent: GroupCallSoundboardEvent | null;
   groupCallVideoStates: Record<string, boolean>;
   groupCallScreenSharingStates: Record<string, boolean>;
   groupMutedUserIds: Set<string>;
@@ -117,6 +129,7 @@ interface CallContextType {
   toggleGroupScreenShare: () => Promise<void>;
   sendGroupCallMessage: (message: string) => void;
   triggerGroupCallEmoji: (emoji: string) => void;
+  triggerGroupCallSoundboard: (soundId: string, name: string, emoji: string, audioData?: string) => void;
   adminMuteAll: () => void;
   toggleHandRaise: () => void;
   toggleFootRaise: () => void;
@@ -330,9 +343,10 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Synchronized timestamp state
   const [groupCallStartedAt, setGroupCallStartedAt] = useState<number | null>(null);
 
-  // Ephemeral Group Call Features (Chat & Emoji Reactions)
+  // Ephemeral Group Call Features (Chat & Emoji Reactions & Soundboard)
   const [groupCallMessages, setGroupCallMessages] = useState<GroupChatMessage[]>([]);
   const [latestEmojiReaction, setLatestEmojiReaction] = useState<GroupCallEmojiReaction | null>(null);
+  const [latestSoundboardEvent, setLatestSoundboardEvent] = useState<GroupCallSoundboardEvent | null>(null);
   const [groupCallVideoStates, setGroupCallVideoStates] = useState<Record<string, boolean>>({});
   const [groupCallScreenSharingStates, setGroupCallScreenSharingStates] = useState<Record<string, boolean>>({});
 
@@ -498,6 +512,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
           active: res.active,
           type: res.type,
           startedAt: res.startedAt,
+          participants: res.participants,
           participantsCount: res.participants?.length || 0,
         });
       }
@@ -1580,6 +1595,24 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
     });
 
+    // Handle incoming Discord-like soundboard reaction with audio & emoji
+    socket.on('group-call-soundboard-received', (data: { userId: string; soundId: string; name: string; emoji: string; audioData?: string; id?: number }) => {
+      soundboardManager.playSound(data.soundId, data.audioData);
+      const eventId = data.id || (Date.now() + Math.random());
+      setLatestEmojiReaction({
+        userId: data.userId,
+        emoji: data.emoji,
+        id: eventId,
+      });
+      setLatestSoundboardEvent({
+        userId: data.userId,
+        soundId: data.soundId,
+        name: data.name,
+        emoji: data.emoji,
+        id: eventId,
+      });
+    });
+
     // Handle camera and audio status changes of other peers
     socket.on('group-call-media-state-received', (data: { userId: string; videoEnabled: boolean; audioEnabled: boolean; handRaised?: boolean; footRaised?: boolean; isScreenSharing?: boolean }) => {
       setGroupCallVideoStates(prev => ({
@@ -1697,6 +1730,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       socket.off('group-call-force-muted');
       socket.off('group-call-force-unmuted');
       socket.off('group-call-handled-elsewhere');
+      socket.off('group-call-soundboard-received');
     };
   }, [socket, createGroupPeerConnection, removeGroupPeer, cleanupGroupCall]);
 
@@ -2003,6 +2037,37 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, [activeGroupCall, currentConvoId, socket, user]);
 
+  const triggerGroupCallSoundboard = useCallback((soundId: string, name: string, emoji: string, audioData?: string) => {
+    const activeCallConvoId = activeGroupCall?.conversationId || currentConvoId;
+    if (!activeCallConvoId || !socket) return;
+
+    soundboardManager.playSound(soundId, audioData);
+    soundboardManager.recordSoundUsage(soundId);
+
+    const eventId = Date.now() + Math.random();
+    setLatestEmojiReaction({
+      userId: user?.id || 'unknown',
+      emoji,
+      id: eventId,
+    });
+
+    setLatestSoundboardEvent({
+      userId: user?.id || 'unknown',
+      soundId,
+      name,
+      emoji,
+      id: eventId,
+    });
+
+    socket.emit('group-call-soundboard', {
+      conversationId: activeCallConvoId,
+      soundId,
+      name,
+      emoji,
+      audioData,
+    });
+  }, [activeGroupCall, currentConvoId, socket, user]);
+
   const adminMuteAll = useCallback(() => {
     const activeCallConvoId = activeGroupCall?.conversationId || currentConvoId;
     if (!activeCallConvoId || !socket) return;
@@ -2133,6 +2198,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         groupCallStatus,
         groupCallMessages,
         latestEmojiReaction,
+        latestSoundboardEvent,
         groupCallVideoStates,
         groupCallScreenSharingStates,
         groupMutedUserIds,
@@ -2150,6 +2216,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toggleGroupScreenShare,
         sendGroupCallMessage,
         triggerGroupCallEmoji,
+        triggerGroupCallSoundboard,
         adminMuteAll,
         toggleHandRaise,
         toggleFootRaise,

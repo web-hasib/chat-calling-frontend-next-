@@ -521,18 +521,6 @@ export const OneToOneCallOverlay: React.FC<OneToOneCallOverlayProps> = ({
             {isVideoMuted ? <VideoOff size={20} /> : <VideoOn size={20} />}
           </button>
 
-          {/* Quick Flip Camera (Mobile / Desktop) */}
-          <button
-            className={styles.videoBtn}
-            onClick={(e) => {
-              e.stopPropagation();
-              switchCamera();
-            }}
-            title="Flip Camera"
-          >
-            <FlipHorizontal size={20} />
-          </button>
-
           {/* Screen Share button (supported on both mobile & desktop) */}
           <button
             className={isScreenSharing ? styles.videoBtnActive : styles.videoBtn}
