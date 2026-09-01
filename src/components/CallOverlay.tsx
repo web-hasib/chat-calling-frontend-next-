@@ -4,13 +4,14 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useCall } from '../context/CallContext';
 import { useAuth } from '../context/AuthContext';
 import styles from './CallOverlay.module.css';
-import { Phone, PhoneOff, Mic, MicOff, Video as VideoOn, VideoOff, Monitor, Users, LogOut, MessageSquare, Smile, Send, X as CloseIcon, Maximize2, Minimize2, Settings, FlipHorizontal } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Video as VideoOn, VideoOff, Monitor, Users, LogOut, MessageSquare, Smile, Volume2, Send, X as CloseIcon, Maximize2, Minimize2, Settings, FlipHorizontal } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
-import { DeviceSettingsModal } from './DeviceSettingsModal';
+import { DeviceSettingsModal, DockSettings, getSavedDockSettings } from './DeviceSettingsModal';
 import { OneToOneCallOverlay } from './OneToOneCallOverlay';
 import { InMeetingChatPanel } from './InMeetingChatPanel';
 import { ParticipantsModal } from './ParticipantsModal';
 import { ConfirmationModal } from './ConfirmationModal';
+import { SoundboardModal } from './SoundboardModal';
 import { useAudioActivity } from '../hooks/useAudioActivity';
 
 interface FloatingEmoji {
@@ -311,6 +312,7 @@ const CallOverlay: React.FC = () => {
     sendGroupCallMessage,
     triggerGroupCallEmoji,
     latestEmojiReaction,
+    latestSoundboardEvent,
     groupCallVideoStates,
     groupCallScreenSharingStates,
     groupMutedUserIds,
@@ -334,7 +336,10 @@ const CallOverlay: React.FC = () => {
   const [showChatPanel, setShowChatPanel] = useState(false);
   const [showEmojiTray, setShowEmojiTray] = useState(false);
   const [showCustomEmojiPicker, setShowCustomEmojiPicker] = useState(false);
+  const [showSoundboard, setShowSoundboard] = useState(false);
+  const [activeSoundToast, setActiveSoundToast] = useState<{ name: string; emoji: string; userName: string } | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [dockSettings, setDockSettings] = useState<DockSettings>(getSavedDockSettings);
   const [chatInputText, setChatInputText] = useState('');
   const [floatingEmojis, setFloatingEmojis] = useState<FloatingEmoji[]>([]);
   const [focusedUserId, setFocusedUserId] = useState<string | null>(null);
@@ -573,6 +578,23 @@ const CallOverlay: React.FC = () => {
       }, maxLifetime);
     }
   }, [latestEmojiReaction]);
+
+  // Display Discord-style soundboard notification banner
+  useEffect(() => {
+    if (latestSoundboardEvent) {
+      const sender = activeGroupCall?.participants?.find(p => p.userId === latestSoundboardEvent.userId);
+      const senderName = sender?.name || (latestSoundboardEvent.userId === user?.id ? 'You' : 'Someone');
+      setActiveSoundToast({
+        name: latestSoundboardEvent.name,
+        emoji: latestSoundboardEvent.emoji,
+        userName: senderName,
+      });
+      const timer = setTimeout(() => {
+        setActiveSoundToast(null);
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [latestSoundboardEvent, activeGroupCall, user]);
 
   // Memoized sorted participant list for participants modal
   const sortedModalParticipants = useMemo(() => {
@@ -815,6 +837,35 @@ const CallOverlay: React.FC = () => {
                   </span>
                 ))}
               </div>
+
+              {/* Discord-style soundboard notification pill */}
+              {activeSoundToast && (
+                <div style={{
+                  position: 'absolute',
+                  top: '24px',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  backgroundColor: 'rgba(30, 31, 34, 0.95)',
+                  backdropFilter: 'blur(10px)',
+                  border: '1px solid rgba(88, 101, 242, 0.5)',
+                  borderRadius: '30px',
+                  padding: '8px 20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
+                  zIndex: 9999,
+                  color: '#f2f3f5',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  pointerEvents: 'none',
+                }}>
+                  <span style={{ fontSize: '22px' }}>{activeSoundToast.emoji}</span>
+                  <span>
+                    <strong style={{ color: '#5865f2' }}>{activeSoundToast.userName}</strong> played <span style={{ color: '#dbdee1' }}>{activeSoundToast.name}</span>
+                  </span>
+                </div>
+              )}
 
               {isVideoCall ? (
                 (() => {
@@ -1219,23 +1270,27 @@ const CallOverlay: React.FC = () => {
             </button>
 
             {/* Participants Panel Button */}
-            <button
-              className={showAllParticipantsPanel ? styles.videoBtnActive : styles.videoBtn}
-              onClick={() => setShowAllParticipantsPanel(!showAllParticipantsPanel)}
-              title="View All Participants"
-            >
-              <Users size={20} />
-            </button>
+            {dockSettings.showParticipants && (
+              <button
+                className={showAllParticipantsPanel ? styles.videoBtnActive : styles.videoBtn}
+                onClick={() => setShowAllParticipantsPanel(!showAllParticipantsPanel)}
+                title="View All Participants"
+              >
+                <Users size={20} />
+              </button>
+            )}
 
             {/* Hand Raise */}
-            <button
-              className={isHandRaised ? styles.videoBtnActive : styles.videoBtn}
-              onClick={() => setRaiseConfirmModal({ type: 'hand', action: isHandRaised ? 'lower' : 'raise' })}
-              title={isHandRaised ? 'Lower Hand' : 'Raise Hand'}
-              style={isHandRaised ? { backgroundColor: 'rgba(250, 204, 21, 0.2)', color: '#facc15' } : {}}
-            >
-              <span style={{ fontSize: '18px' }}>🖐️</span>
-            </button>
+            {dockSettings.showHandRaise && (
+              <button
+                className={isHandRaised ? styles.videoBtnActive : styles.videoBtn}
+                onClick={() => setRaiseConfirmModal({ type: 'hand', action: isHandRaised ? 'lower' : 'raise' })}
+                title={isHandRaised ? 'Lower Hand' : 'Raise Hand'}
+                style={isHandRaised ? { backgroundColor: 'rgba(250, 204, 21, 0.2)', color: '#facc15' } : {}}
+              >
+                <span style={{ fontSize: '18px' }}>🖐️</span>
+              </button>
+            )}
 
             {isVideoCall && (
               <button
@@ -1247,17 +1302,7 @@ const CallOverlay: React.FC = () => {
               </button>
             )}
 
-            {isVideoCall && (
-              <button
-                className={styles.videoBtn}
-                onClick={() => switchCamera()}
-                title="Flip Camera"
-              >
-                <FlipHorizontal size={20} />
-              </button>
-            )}
-
-            {isVideoCall && (
+            {isVideoCall && dockSettings.showScreenShare && (
               <button
                 className={isGroupScreenSharing ? styles.videoBtnActive : styles.videoBtn}
                 onClick={toggleGroupScreenShare}
@@ -1268,73 +1313,95 @@ const CallOverlay: React.FC = () => {
             )}
 
             {/* Reactions Control */}
-            <div style={{ position: 'relative' }}>
-              <button
-                className={showEmojiTray ? styles.videoBtnActive : styles.videoBtn}
-                onClick={() => {
-                  setShowEmojiTray(!showEmojiTray);
-                  if (showEmojiTray) setShowCustomEmojiPicker(false);
-                }}
-                title="Send Reaction"
-              >
-                <Smile size={20} />
-              </button>
-              {showEmojiTray && (
-                <div className={styles.emojiPickerTray}>
-                  {EMOJI_PRESETS.map(emoji => (
+            {dockSettings.showReactions && (
+              <div style={{ position: 'relative' }}>
+                <button
+                  className={showEmojiTray ? styles.videoBtnActive : styles.videoBtn}
+                  onClick={() => {
+                    setShowEmojiTray(!showEmojiTray);
+                    if (showEmojiTray) setShowCustomEmojiPicker(false);
+                  }}
+                  title="Send Reaction"
+                >
+                  <Smile size={20} />
+                </button>
+                {showEmojiTray && (
+                  <div className={styles.emojiPickerTray}>
+                    {EMOJI_PRESETS.map(emoji => (
+                      <button
+                        key={emoji}
+                        className={styles.trayEmojiBtn}
+                        onClick={() => {
+                          triggerGroupCallEmoji(emoji);
+                          setShowEmojiTray(false);
+                          setShowCustomEmojiPicker(false);
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                    {/* Plus button for Custom Emoji Picker */}
                     <button
-                      key={emoji}
+                      type="button"
                       className={styles.trayEmojiBtn}
-                      onClick={() => {
-                        triggerGroupCallEmoji(emoji);
-                        setShowEmojiTray(false);
-                        setShowCustomEmojiPicker(false);
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowCustomEmojiPicker(!showCustomEmojiPicker);
                       }}
+                      title="Choose Custom Emoji"
+                      style={{ fontSize: '18px', fontWeight: 'bold', color: '#a5b4fc', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(255,255,255,0.08)', flexShrink: 0 }}
                     >
-                      {emoji}
+                      +
                     </button>
-                  ))}
-                  {/* Plus button for Custom Emoji Picker */}
-                  <button
-                    type="button"
-                    className={styles.trayEmojiBtn}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowCustomEmojiPicker(!showCustomEmojiPicker);
-                    }}
-                    title="Choose Custom Emoji"
-                    style={{ fontSize: '18px', fontWeight: 'bold', color: '#a5b4fc', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(255,255,255,0.08)', flexShrink: 0 }}
-                  >
-                    +
-                  </button>
-                </div>
-              )}
+                  </div>
+                )}
 
-              {/* Custom Emoji Picker placed outside the scrollable tray */}
-              {showCustomEmojiPicker && (
-                <div className={styles.customEmojiPickerWrapper}>
-                  <EmojiPicker
-                    theme={Theme.DARK}
-                    width={isMobile ? 320 : 350}
-                    height={380}
-                    onEmojiClick={(emojiData) => {
-                      triggerGroupCallEmoji(emojiData.emoji);
-                      setShowCustomEmojiPicker(false);
-                      setShowEmojiTray(false);
-                    }}
-                  />
-                </div>
-              )}
-            </div>
+                {/* Custom Emoji Picker placed outside the scrollable tray */}
+                {showCustomEmojiPicker && (
+                  <div className={styles.customEmojiPickerWrapper}>
+                    <EmojiPicker
+                      theme={Theme.DARK}
+                      width={isMobile ? 320 : 350}
+                      height={380}
+                      onEmojiClick={(emojiData) => {
+                        triggerGroupCallEmoji(emojiData.emoji);
+                        setShowCustomEmojiPicker(false);
+                        setShowEmojiTray(false);
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Discord-style Soundboard Control */}
+            {dockSettings.showSoundboard && (
+              <button
+                className={showSoundboard ? styles.videoBtnActive : styles.videoBtn}
+                onClick={() => {
+                  setShowSoundboard(!showSoundboard);
+                  if (!showSoundboard) {
+                    setShowEmojiTray(false);
+                    setShowCustomEmojiPicker(false);
+                  }
+                }}
+                title="Soundboard"
+                style={showSoundboard ? { backgroundColor: '#5865f2', color: '#ffffff' } : undefined}
+              >
+                <Volume2 size={20} />
+              </button>
+            )}
 
             {/* Chat Control */}
-            <button
-              className={showChatPanel ? styles.videoBtnActive : styles.videoBtn}
-              onClick={() => setShowChatPanel(!showChatPanel)}
-              title="Meeting Chat"
-            >
-              <MessageSquare size={20} />
-            </button>
+            {dockSettings.showChat && (
+              <button
+                className={showChatPanel ? styles.videoBtnActive : styles.videoBtn}
+                onClick={() => setShowChatPanel(!showChatPanel)}
+                title="Meeting Chat"
+              >
+                <MessageSquare size={20} />
+              </button>
+            )}
 
             {/* Settings & More Controls */}
             <button
@@ -1350,6 +1417,11 @@ const CallOverlay: React.FC = () => {
             </button>
           </div>
 
+          <SoundboardModal
+            isOpen={showSoundboard}
+            onClose={() => setShowSoundboard(false)}
+          />
+
           <DeviceSettingsModal
             isOpen={showSettingsModal}
             onClose={() => setShowSettingsModal(false)}
@@ -1358,9 +1430,20 @@ const CallOverlay: React.FC = () => {
             onSelectAudioOutput={switchAudioOutput}
             isFullscreen={isFullscreen}
             onToggleFullscreen={toggleFullscreen}
+            isHandRaised={isHandRaised}
+            onToggleHandRaise={() => setRaiseConfirmModal({ type: 'hand', action: isHandRaised ? 'lower' : 'raise' })}
             isFootRaised={isFootRaised}
             onToggleFootRaise={() => setRaiseConfirmModal({ type: 'foot', action: isFootRaised ? 'lower' : 'raise' })}
             onAdminMuteAll={(myGroupRole === 'CREATOR' || myGroupRole === 'ADMIN' || myGroupRole === 'MODERATOR') ? () => setMuteConfirmConfig({ isOpen: true, type: 'all' }) : undefined}
+            isScreenSharing={isGroupScreenSharing}
+            onToggleScreenShare={toggleGroupScreenShare}
+            dockSettings={dockSettings}
+            onUpdateDockSettings={setDockSettings}
+            onOpenParticipants={() => setShowAllParticipantsPanel(true)}
+            onOpenSoundboard={() => setShowSoundboard(true)}
+            onOpenChat={() => setShowChatPanel(true)}
+            totalParticipants={totalParticipants}
+            isVideoCall={isVideoCall}
           />
           
           {/* Toast notifications */}
